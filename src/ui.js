@@ -4,7 +4,6 @@ export class UI {
     this.scoreEl = document.getElementById('score');
     this.planesEl = document.getElementById('planes');
     this.fpsEl = document.getElementById('fps');
-
     this._toastTimer = null;
   }
 
@@ -13,17 +12,9 @@ export class UI {
     this.hud.hidden = !v;
   }
 
-  setScore(v) {
-    if (this.scoreEl) this.scoreEl.textContent = `Score: ${v}`;
-  }
-
-  setPlanes(n) {
-    if (this.planesEl) this.planesEl.textContent = `Planes: ${n ?? '–'}`;
-  }
-
-  setFps(fps) {
-    if (this.fpsEl) this.fpsEl.textContent = `FPS: ${fps}`;
-  }
+  setScore(v) { if (this.scoreEl) this.scoreEl.textContent = `Score: ${v}`; }
+  setPlanes(n) { if (this.planesEl) this.planesEl.textContent = `Planes: ${n ?? '–'}`; }
+  setFps(fps) { if (this.fpsEl) this.fpsEl.textContent = `FPS: ${fps}`; }
 
   toast(msg, ms = 2500) {
     let el = document.getElementById('toast');
