@@ -1,14 +1,13 @@
-const THREE_URL = 'https://unpkg.com/three@0.166.1/build/three.module.js';
-const { Group, Mesh, MeshStandardMaterial, CylinderGeometry, TorusGeometry, Vector3, Quaternion } = await import(THREE_URL);
+import * as THREE from 'https://unpkg.com/three@0.166.1/build/three.module.js';
 
 export class CoinManager {
   constructor(scene) {
-    this.group = new Group();
+    this.group = new THREE.Group();
     scene.add(this.group);
 
-    this.coins = []; // { mesh, radius, anchor?, state: 'live'|'vanish', t }
+    this.coins = []; // { mesh, radius, anchor?, state: 'live'|'vanish'|'gone', t }
     this._coinGeom = buildCoinGeometry();
-    this._coinMat = new MeshStandardMaterial({
+    this._coinMat = new THREE.MeshStandardMaterial({
       color: 0xC49B0B,
       metalness: 0.9,
       roughness: 0.2,
@@ -27,14 +26,17 @@ export class CoinManager {
     if (scoreEl) scoreEl.textContent = `Score: 0`;
   }
 
-  // Convenience: cluster um Pose (Fallback)
   spawnClusterAtPose(hitPose, { floorCount = 18, radius = 1.0 } = {}) {
-    const base = new Vector3(hitPose.transform.position.x, hitPose.transform.position.y, hitPose.transform.position.z);
+    const base = new THREE.Vector3(
+      hitPose.transform.position.x,
+      hitPose.transform.position.y,
+      hitPose.transform.position.z
+    );
     for (let i = 0; i < floorCount; i++) {
       const ang = Math.random() * Math.PI * 2;
       const r = Math.random() * radius;
-      const p = base.clone().add(new Vector3(Math.cos(ang) * r, 0.01, Math.sin(ang) * r));
-      const q = new Quaternion(
+      const p = base.clone().add(new THREE.Vector3(Math.cos(ang) * r, 0.01, Math.sin(ang) * r));
+      const q = new THREE.Quaternion(
         hitPose.transform.orientation.x,
         hitPose.transform.orientation.y,
         hitPose.transform.orientation.z,
@@ -44,9 +46,8 @@ export class CoinManager {
     }
   }
 
-  async spawnAtPose(frame, refSpace, poseLike, { useAnchors = false, session } = {}) {
-    // poseLike: { position: THREE.Vector3, orientation: THREE.Quaternion }
-    if (!useAnchors) {
+  async spawnAtPose(frame, refSpace, poseLike, { useAnchors = false } = {}) {
+    if (!useAnchors || !('createAnchor' in XRFrame.prototype)) {
       this._spawnAtWorld(poseLike.position, poseLike.orientation);
       return;
     }
@@ -63,7 +64,6 @@ export class CoinManager {
       this.group.add(mesh);
       this.coins.push({ mesh, radius: 0.07, anchor, state: 'live', t: 0 });
     } catch {
-      // Fallback wenn Anchors fehlschlagen
       this._spawnAtWorld(poseLike.position, poseLike.orientation);
     }
   }
@@ -77,15 +77,13 @@ export class CoinManager {
   }
 
   _makeCoinMesh() {
-    const mesh = new Mesh(this._coinGeom, this._coinMat.clone());
+    const mesh = new THREE.Mesh(this._coinGeom, this._coinMat.clone());
     mesh.castShadow = false;
     mesh.receiveShadow = false;
-    // leichte „Glow“-Emissive-Variation
     mesh.material.emissiveIntensity = 0.28 + Math.random() * 0.15;
     return mesh;
   }
 
-  // Simple Collect + Vanish Animation
   testCollect(spheres, frame, refSpace, ui) {
     // Update anchored coin poses
     for (const c of this.coins) {
@@ -118,9 +116,9 @@ export class CoinManager {
           }
         }
       } else if (c.state === 'vanish') {
-        c.t += 0.06; // anim speed
+        c.t += 0.06;
         const k = Math.min(1, c.t);
-        const scale = 1 + 0.6 * (1 - k) - 1.2 * k; // kurz größer, dann kleiner
+        const scale = 1 + 0.6 * (1 - k) - 1.2 * k;
         c.mesh.scale.setScalar(Math.max(0.01, 1 + scale));
         c.mesh.material.emissiveIntensity = 0.6 * (1 - k);
         if (k >= 1) {
@@ -135,10 +133,6 @@ export class CoinManager {
 }
 
 function buildCoinGeometry() {
-  // Prozedural: dünner Zylinder + leichter Rand (Torus)
-  const disc = new CylinderGeometry(0.065, 0.065, 0.012, 48, 1, true);
-  const rim = new TorusGeometry(0.065, 0.006, 12, 48);
-  // Wir kombinieren sie in einem Mesh (ein Material genügt) – in Three.js lassen wir 2 Meshes okay, einfacher:
-  // Für Performance/Einfachheit geben wir nur den Zylinder zurück; optisch reicht es.
-  return disc;
+  // Dünner Zylinder – simpel & performant
+  return new THREE.CylinderGeometry(0.065, 0.065, 0.012, 48, 1, true);
 }
