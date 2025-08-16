@@ -97,6 +97,13 @@ export class XRApp {
     const { floorPlane, wallPlanes, planeCount } = this.planeTracker.classify(frame, this.refSpace);
     this.ui.setPlanes(planeCount);
 
+    const viewerPose = frame.getViewerPose(this.refSpace);
+    const viewerPos = viewerPose ? new THREE.Vector3(
+      viewerPose.transform.position.x,
+      viewerPose.transform.position.y,
+      viewerPose.transform.position.z
+    ) : new THREE.Vector3();
+
     if (!floorPlane && !wallPlanes.length && this.support.hitTest) {
       const hitSource = await this.renderer.xr.getSession().requestHitTestSource({ space: this.viewerSpace });
       const hits = frame.getHitTestResults(hitSource);
@@ -111,19 +118,27 @@ export class XRApp {
       return;
     }
 
-    // *** Reduzierte Dichte + größerer Mindestabstand ***
-    const placements = choosePlacements(frame, this.refSpace, floorPlane, wallPlanes, {
-      floorCount: 16,          // vorher 28
-      wallCountPerPlane: 3,    // vorher 6
-      minSpacing: 0.5          // vorher 0.35
+    // Placements bestimmen
+    let placements = choosePlacements(frame, this.refSpace, floorPlane, wallPlanes, {
+      floorCount: 16,
+      wallCountPerPlane: 3,
+      minSpacing: 0.5
     });
 
-    const session = this.renderer.xr.getSession();
-    const useAnchors = this.support.anchors;
+    // **Spielbereich einschränken**: max. Distanz zum Viewer (z. B. 4 m)
+    const MAX_DIST = 4.0;
+    placements = placements.filter(p => {
+      const d = viewerPos.distanceTo(p.pose.position);
+      return d <= MAX_DIST;
+    });
 
+    const useAnchors = this.support.anchors;
     this.coins.clear();
     for (const p of placements) {
-      await this.coins.spawnAtPose(frame, this.refSpace, p.pose, { useAnchors, session });
+      await this.coins.spawnAtPose(frame, this.refSpace, p.pose, {
+        useAnchors,
+        meta: { kind: p.kind, normal: p.normal }
+      });
     }
   }
 
