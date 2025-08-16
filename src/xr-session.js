@@ -13,14 +13,7 @@ export class XRApp {
     this.refSpace = null;
     this.viewerSpace = null;
 
-    this.support = {
-      planes: false,
-      anchors: false,
-      hitTest: false,
-      hands: false,
-      domOverlay: false,
-    };
-
+    this.support = { planes: false, anchors: false, hitTest: false, hands: false, domOverlay: false };
     this.planeTracker = null;
     this.coins = null;
     this.world = new THREE.Group();
@@ -38,29 +31,23 @@ export class XRApp {
       optionalFeatures: ['plane-detection', 'hit-test', 'anchors', 'hand-tracking', 'dom-overlay'],
       domOverlay: { root: document.body }
     };
-
     const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
 
-    // Renderer + Scene
     this.sceneRig = new SceneRig();
     this.renderer = this.sceneRig.renderer;
     this.sceneRig.scene.add(this.world);
 
-    // Reference spaces
     this.refSpace = await session.requestReferenceSpace('local-floor');
     this.viewerSpace = await session.requestReferenceSpace('viewer');
 
-    // Feature availability
     this.support.domOverlay = !!session.domOverlayState;
     this.support.hitTest = typeof session.requestHitTestSource === 'function';
     this.support.anchors = ('createAnchor' in XRFrame.prototype) || ('createAnchor' in XRHitTestResult.prototype);
-    this.support.planes = true; // wenn angefragt, i. d. R. vorhanden (Quest)
+    this.support.planes = true;
 
-    // Managers
     this.planeTracker = new PlaneTracker();
     this.coins = new CoinManager(this.sceneRig.scene);
 
-    // XR binding
     this.renderer.xr.enabled = true;
     this.renderer.xr.setReferenceSpaceType('local-floor');
     await this.renderer.xr.setSession(session);
@@ -68,8 +55,7 @@ export class XRApp {
     session.addEventListener('end', () => {
       this.ui.setHudVisible(false);
       const start = document.getElementById('start-ar');
-      start.classList.remove('hidden');
-      start.disabled = false;
+      start.classList.remove('hidden'); start.disabled = false;
       this.cleanup();
     });
 
@@ -116,7 +102,7 @@ export class XRApp {
       const hits = frame.getHitTestResults(hitSource);
       if (hits.length) {
         const hitPose = hits[0].getPose(this.refSpace);
-        this.coins.spawnClusterAtPose(hitPose, { floorCount: 24, radius: 1.5 });
+        this.coins.spawnClusterAtPose(hitPose, { floorCount: 10, radius: 0.8 });
         hitSource.cancel();
         return;
       }
@@ -125,10 +111,11 @@ export class XRApp {
       return;
     }
 
+    // *** Reduzierte Dichte + größerer Mindestabstand ***
     const placements = choosePlacements(frame, this.refSpace, floorPlane, wallPlanes, {
-      floorCount: 28,
-      wallCountPerPlane: 6,
-      minSpacing: 0.35
+      floorCount: 16,          // vorher 28
+      wallCountPerPlane: 3,    // vorher 6
+      minSpacing: 0.5          // vorher 0.35
     });
 
     const session = this.renderer.xr.getSession();
@@ -159,8 +146,7 @@ export class XRApp {
     const now = performance.now();
     if (now - this._lastFpsSample > 500) {
       const fps = Math.round((this._frameCount * 1000) / (now - this._lastFpsSample));
-      this._frameCount = 0;
-      this._lastFpsSample = now;
+      this._frameCount = 0; this._lastFpsSample = now;
       this.ui.setFps(fps);
     }
 
