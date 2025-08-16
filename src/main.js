@@ -21,7 +21,7 @@ startBtn.addEventListener('click', async () => {
     startBtn.classList.add('hidden');
   } catch (err) {
     console.error(err);
-    ui.toast('Konnte AR-Session nicht starten: ' + err?.message);
+    ui.toast('Konnte AR-Session nicht starten: ' + (err?.message ?? err));
     startBtn.disabled = false;
   }
 });
