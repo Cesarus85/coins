@@ -1,6 +1,5 @@
 import * as THREE from 'https://unpkg.com/three@0.166.1/build/three.module.js';
 
-// Wählt plausible Coin-Posen auf Boden & Wänden, inkl. Mindestabstand.
 export function choosePlacements(frame, refSpace, floorPlane, wallPlanes, opts = {}) {
   const { floorCount = 24, wallCountPerPlane = 6, minSpacing = 0.35 } = opts;
   const placements = [];
@@ -8,21 +7,22 @@ export function choosePlacements(frame, refSpace, floorPlane, wallPlanes, opts =
 
   if (floorPlane) {
     const floorPose = frame.getPose(floorPlane.planeSpace, refSpace);
-    sampleOnPlane(frame, refSpace, floorPlane, floorCount, minSpacing, chosen, placements, floorPose);
+    sampleOnPlane(frame, refSpace, floorPlane, floorCount, minSpacing, chosen, placements, floorPose, 'floor');
   }
 
   for (const wp of wallPlanes) {
     const wallPose = frame.getPose(wp.planeSpace, refSpace);
-    sampleOnPlane(frame, refSpace, wp, wallCountPerPlane, minSpacing, chosen, placements, wallPose);
+    sampleOnPlane(frame, refSpace, wp, wallCountPerPlane, minSpacing, chosen, placements, wallPose, 'wall');
   }
 
   return placements;
 }
 
-function sampleOnPlane(frame, refSpace, plane, count, minSpacing, chosen, out, pose) {
+function sampleOnPlane(frame, refSpace, plane, count, minSpacing, chosen, out, pose, kind) {
   const poly = plane.polygon;
   if (!poly?.length || !pose) return;
 
+  // Plane-space Bounding-Box (XZ) + Matrix nach Welt
   let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
   for (const p of poly) {
     if (p.x < minX) minX = p.x;
@@ -33,6 +33,9 @@ function sampleOnPlane(frame, refSpace, plane, count, minSpacing, chosen, out, p
 
   const m = poseToMatrix(pose);
   const world = new THREE.Vector3();
+
+  // Welt-Normale der Plane (Y-Achse im Plane-Space → Welt)
+  const normal = new THREE.Vector3(0,1,0).applyQuaternion(matrixToQuaternion(m)).normalize();
 
   let attempts = 0, placed = 0;
   while (placed < count && attempts < count * 40) {
@@ -45,7 +48,11 @@ function sampleOnPlane(frame, refSpace, plane, count, minSpacing, chosen, out, p
     if (tooClose(world, chosen, minSpacing)) continue;
 
     chosen.push(world.clone());
-    out.push({ pose: { position: world.clone(), orientation: matrixToQuaternion(m) } });
+    out.push({
+      pose: { position: world.clone(), orientation: matrixToQuaternion(m) },
+      kind,
+      normal: normal.clone()
+    });
     placed++;
   }
 }
