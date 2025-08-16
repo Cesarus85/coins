@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AR Coin Hunt</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main id="ui-root">
+    <h1>AR Coin Hunt</h1>
+    <p>Erkenne Boden & Wände, sammle dann goldene Münzen durch Berührung.</p>
+    <button id="start-ar">Starte AR</button>
+
+    <div id="hud" hidden>
+      <div class="row">
+        <span id="score">Score: 0</span>
+        <span id="planes">Planes: –</span>
+        <span id="fps">FPS: –</span>
+      </div>
+      <div class="row">
+        <button id="respawn">Neu verteilen</button>
+        <button id="end">Beenden</button>
+      </div>
+      <div class="row small">
+        <label><input id="debugPlanes" type="checkbox" /> Plane-Umrisse anzeigen</label>
+      </div>
+    </div>
+
+    <noscript>Bitte JavaScript aktivieren.</noscript>
+  </main>
+
+  <!-- Wir nutzen Three.js als ES-Module direkt vom CDN -->
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
