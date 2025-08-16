@@ -1,18 +1,27 @@
-import * as THREE from 'https://unpkg.com/three@0.166.1/build/three.module.js';
-import { GLTFLoader } from 'https://unpkg.com/three@0.166.1/examples/jsm/loaders/GLTFLoader.js';
+// coins.js – GLB-Coins mit Auto-Scale auf Ziel-Durchmesser
+
+const THREE_URL = 'https://unpkg.com/three@0.166.1/build/three.module.js';
+const THREE = await import(THREE_URL);
+const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+
+const { Group, Vector3, Quaternion, Box3, Sphere, Color } = THREE;
+
+// Zielgröße in Metern (Durchmesser der Münze im AR-Raum)
+const TARGET_DIAMETER_M = 0.035; // 3.5 cm
+const TARGET_RADIUS_M   = TARGET_DIAMETER_M / 2;
 
 export class CoinManager {
   constructor(scene) {
-    this.group = new THREE.Group();
+    this.group = new Group();
     scene.add(this.group);
 
     this.coins = []; // { mesh, radius, anchor?, state: 'live'|'vanish'|'gone', t }
     this.score = 0;
 
-    // GLB wird lazy geladen (einmal) und dann geklont
     this._loader = new GLTFLoader();
-    this._coinTemplate = null;     // THREE.Object3D (geklonbar)
-    this._coinRadius = 0.07;       // Default, wird nach dem Laden anhand der Geometrie verfeinert
+    this._coinTemplate = null;
+    this._coinScale = 1.0;
+    this._coinRadius = Math.max(0.02, TARGET_RADIUS_M * 0.6); // Kollisions-Radius (etwas kleiner als sichtbarer)
     this._loadingPromise = null;
   }
 
@@ -24,10 +33,6 @@ export class CoinManager {
     if (scoreEl) scoreEl.textContent = `Score: 0`;
   }
 
-  /**
-   * Laden der GLB-Münze (einmalig), ermittelt einen sinnvollen Kollisionsradius.
-   * Du kannst die Datei unter ./assets/coin.glb ablegen.
-   */
   async _ensureCoinLoaded() {
     if (this._coinTemplate) return this._coinTemplate;
     if (this._loadingPromise) return this._loadingPromise;
@@ -37,39 +42,30 @@ export class CoinManager {
         './assets/coin.glb',
         (gltf) => {
           const root = gltf.scene || gltf.scenes?.[0];
-          if (!root) {
-            reject(new Error('coin.glb enthält keine Scene.'));
-            return;
-          }
+          if (!root) return reject(new Error('coin.glb enthält keine Scene.'));
 
-          // Material leicht „golden“ pushen (falls das GLB kein PBR-Gold hat)
-          root.traverse((obj) => {
-            if (obj.isMesh) {
+          // Sichtbarkeit in Passthrough erhöhen (optional, dezent)
+          root.traverse(obj => {
+            if (obj.isMesh && obj.material) {
+              if (!obj.material.emissive) obj.material.emissive = new Color(0x5a4300);
+              if ('emissiveIntensity' in obj.material) obj.material.emissiveIntensity = Math.max(0.18, obj.material.emissiveIntensity ?? 0.18);
+              if ('metalness' in obj.material) obj.material.metalness = Math.max(0.7, obj.material.metalness ?? 0.7);
+              if ('roughness' in obj.material) obj.material.roughness = Math.min(0.4, obj.material.roughness ?? 0.4);
               obj.castShadow = false;
               obj.receiveShadow = false;
-              // Wenn bereits ein Standard/Physical-Material existiert, lassen wir es weitgehend in Ruhe,
-              // erhöhen aber ggf. Emissive leicht für bessere Sichtbarkeit im Passthrough.
-              const m = obj.material;
-              if (m && ('emissiveIntensity' in m)) {
-                if (!m.emissive || m.emissive.equals(new THREE.Color(0x000000))) {
-                  m.emissive = new THREE.Color(0x7a5c00);
-                }
-                m.emissiveIntensity = Math.max(0.25, m.emissiveIntensity ?? 0.25);
-                if ('metalness' in m) m.metalness = Math.max(0.7, m.metalness ?? 0.7);
-                if ('roughness' in m) m.roughness = Math.min(0.35, m.roughness ?? 0.35);
-              }
             }
           });
 
-          // Kollisionsradius grob aus BoundingSphere ableiten
-          const bounds = new THREE.Box3().setFromObject(root);
-          const sphere = bounds.getBoundingSphere(new THREE.Sphere());
-          if (isFinite(sphere.radius) && sphere.radius > 0) {
-            // leicht kleiner, damit der „Touch“ nicht zu empfindlich ist
-            this._coinRadius = Math.max(0.04, Math.min(0.12, sphere.radius * 0.6));
-          }
+          // Auto-Scaling: Bounding-Sphere → auf Ziel-Durchmesser skalieren
+          const bounds = new Box3().setFromObject(root);
+          const sphere = bounds.getBoundingSphere(new Sphere());
+          const srcDiameter = (isFinite(sphere.radius) && sphere.radius > 0) ? sphere.radius * 2 : 1;
+          this._coinScale = (srcDiameter > 0) ? (TARGET_DIAMETER_M / srcDiameter) : 1.0;
 
-          // Template für schnelle Klone vorbereiten (matrixAutoUpdate lassen wir an)
+          // Kollisionsradius passend zur Zielgröße
+          this._coinRadius = Math.max(0.012, TARGET_RADIUS_M * 0.6);
+
+          // Template speichern (unskaliert); wir skalieren pro Klon
           this._coinTemplate = root;
           resolve(this._coinTemplate);
         },
@@ -81,15 +77,15 @@ export class CoinManager {
     return this._loadingPromise;
   }
 
-  // Fallback-Cluster (z. B. wenn nur Hit-Test verfügbar)
-  async spawnClusterAtPose(hitPose, { floorCount = 18, radius = 1.0 } = {}) {
+  // Fallback-Cluster (Hit-Test)
+  async spawnClusterAtPose(hitPose, { floorCount = 12, radius = 0.8 } = {}) {
     await this._ensureCoinLoaded();
-    const base = new THREE.Vector3(
+    const base = new Vector3(
       hitPose.transform.position.x,
       hitPose.transform.position.y,
       hitPose.transform.position.z
     );
-    const q = new THREE.Quaternion(
+    const q = new Quaternion(
       hitPose.transform.orientation.x,
       hitPose.transform.orientation.y,
       hitPose.transform.orientation.z,
@@ -99,15 +95,11 @@ export class CoinManager {
     for (let i = 0; i < floorCount; i++) {
       const ang = Math.random() * Math.PI * 2;
       const r = Math.random() * radius;
-      const p = base.clone().add(new THREE.Vector3(Math.cos(ang) * r, 0.01, Math.sin(ang) * r));
+      const p = base.clone().add(new Vector3(Math.cos(ang) * r, 0.005, Math.sin(ang) * r));
       this._spawnAtWorld(p, q);
     }
   }
 
-  /**
-   * Spawn an einer Pose. Nutzt Anchors, wenn verfügbar.
-   * poseLike: { position: THREE.Vector3, orientation: THREE.Quaternion }
-   */
   async spawnAtPose(frame, refSpace, poseLike, { useAnchors = false } = {}) {
     await this._ensureCoinLoaded();
 
@@ -141,20 +133,21 @@ export class CoinManager {
   }
 
   _makeCoinMesh() {
-    // Tiefen-Klon der geladenen GLB-Szene
     const coin = this._coinTemplate.clone(true);
-    // Optional leichte Variation in der Emissive-Intensität für „Funkeln“
-    coin.traverse((obj) => {
+    coin.scale.setScalar(this._coinScale);
+
+    // kleines Funkeln
+    coin.traverse(obj => {
       if (obj.isMesh && obj.material && ('emissiveIntensity' in obj.material)) {
         obj.material = obj.material.clone();
-        obj.material.emissiveIntensity = (obj.material.emissiveIntensity ?? 0.25) * (0.9 + Math.random() * 0.3);
+        obj.material.emissiveIntensity = (obj.material.emissiveIntensity ?? 0.18) * (0.9 + Math.random() * 0.3);
       }
     });
     return coin;
   }
 
   testCollect(spheres, frame, refSpace, ui) {
-    // Update Anchors → aktualisiere Posen
+    // Anchor-Posen aktualisieren
     for (const c of this.coins) {
       if (c.anchor && frame) {
         const pose = frame.getPose(c.anchor.anchorSpace, refSpace);
@@ -170,13 +163,12 @@ export class CoinManager {
       }
     }
 
-    // Kollision & Sammel-Animation
+    // Kollisionsprüfung & Einsammel-Animation
     let scoreChanged = false;
-    const center = new THREE.Vector3();
+    const center = new Vector3();
 
     for (const c of this.coins) {
       if (c.state === 'live') {
-        // Kollisionszentrum (Bounding-Sphere-Mitte): nutze Objektposition.
         center.copy(c.mesh.position);
         for (const s of spheres) {
           if (center.distanceTo(s.center) <= (c.radius + s.radius)) {
@@ -191,15 +183,13 @@ export class CoinManager {
         c.t += 0.06;
         const k = Math.min(1, c.t);
         const scale = 1 + 0.6 * (1 - k) - 1.2 * k;
-        c.mesh.scale.setScalar(Math.max(0.01, 1 + scale));
+        c.mesh.scale.setScalar(Math.max(0.01, this._coinScale * (1 + scale)));
 
-        // Emissive visuell „ausklingen“ lassen
-        c.mesh.traverse((obj) => {
+        c.mesh.traverse(obj => {
           if (obj.isMesh && obj.material && ('emissiveIntensity' in obj.material)) {
             obj.material.emissiveIntensity = 0.6 * (1 - k);
           }
         });
-
         if (k >= 1) {
           c.mesh.removeFromParent();
           c.state = 'gone';
