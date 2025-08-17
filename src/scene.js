@@ -11,10 +11,12 @@ export class SceneRig {
     this.renderer.autoClear = false;
     document.body.appendChild(this.renderer.domElement);
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
-    const dir  = new THREE.DirectionalLight(0xffffff, 0.6);
+    // HELLERE LICHTER für AR
+    const ambient = new THREE.AmbientLight(0xffffff, 0.65);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x666666, 1.15);
+    const dir  = new THREE.DirectionalLight(0xffffff, 1.05);
     dir.position.set(0.5, 1.0, 0.2);
-    this.scene.add(hemi, dir);
+    this.scene.add(ambient, hemi, dir);
 
     this.renderer.setClearColor(new THREE.Color(0x000000), 0);
 

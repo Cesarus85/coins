@@ -1,12 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// Frühere Zielgröße war Ø 3.5 cm → jetzt 4× so groß = Ø 14 cm
-const COIN_DIAMETER = 0.14;              // Meter
-const COIN_RADIUS   = COIN_DIAMETER / 2;
-
-const GRAVITY = -3.8; // m/s² (leicht reduziertes „Mario“-Gefühl)
-const LIFETIME = 1.2; // Sek.
+// Münze groß (4× vorher): Ø 14 cm
+const COIN_DIAMETER = 0.14;
+const GRAVITY = -3.8;      // m/s²
+const LIFETIME = 1.2;      // Sek.
 
 export class CoinManager {
   constructor(scene) {
@@ -24,7 +22,7 @@ export class CoinManager {
     const root = gltf.scene || gltf.scenes?.[0];
     if (!root) throw new Error('coin.glb ohne Szene');
 
-    // Auto-Scale: auf Ø 14 cm skalieren
+    // Auto-Scale: auf Ø 14 cm
     const bounds = new THREE.Box3().setFromObject(root);
     const sphere = bounds.getBoundingSphere(new THREE.Sphere());
     const srcDiameter = (isFinite(sphere.radius) && sphere.radius > 0) ? sphere.radius * 2 : 1;
@@ -32,10 +30,13 @@ export class CoinManager {
 
     root.traverse(o => {
       if (o.isMesh && o.material) {
-        if (!o.material.emissive) o.material.emissive = new THREE.Color(0x5a4300);
-        if ('emissiveIntensity' in o.material) o.material.emissiveIntensity = Math.max(0.22, o.material.emissiveIntensity ?? 0.22);
-        if ('metalness' in o.material) o.material.metalness = Math.max(0.7, o.material.metalness ?? 0.7);
-        if ('roughness' in o.material) o.material.roughness = Math.min(0.35, o.material.roughness ?? 0.35);
+        // Etwas „heller“ im Passthrough
+        if (!o.material.emissive) o.material.emissive = new THREE.Color(0x6a5200);
+        if ('emissiveIntensity' in o.material) o.material.emissiveIntensity = Math.max(0.35, o.material.emissiveIntensity ?? 0.35);
+        if ('metalness' in o.material) o.material.metalness = Math.max(0.75, o.material.metalness ?? 0.75);
+        if ('roughness' in o.material) o.material.roughness = Math.min(0.3, o.material.roughness ?? 0.3);
+        // für Fade-out
+        if ('opacity' in o.material) { o.material.transparent = true; o.material.opacity = 1.0; }
       }
     });
 
@@ -48,29 +49,28 @@ export class CoinManager {
     coin.scale.setScalar(this.scale);
     coin.position.copy(worldPos);
 
-    // 90°-Drehung, leichte Varianz
+    // 90°-Drehung, zufällige Y-Rotation
     coin.rotateY(Math.random() * Math.PI * 2);
     coin.rotateX(Math.PI / 2);
 
-    // leichte Emissive-Variation
     coin.traverse(o => {
       if (o.isMesh && o.material && ('emissiveIntensity' in o.material)) {
         o.material = o.material.clone();
-        o.material.emissiveIntensity = (o.material.emissiveIntensity ?? 0.22) * (0.9 + Math.random() * 0.3);
+        o.material.emissiveIntensity = (o.material.emissiveIntensity ?? 0.35) * (0.95 + Math.random() * 0.25);
+        if ('opacity' in o.material) { o.material.transparent = true; o.material.opacity = 1.0; }
       }
     });
 
     this.scene.add(coin);
 
     // Startgeschwindigkeit: nach oben + kleine seitliche Varianz
-    const vel = upNormal.clone().multiplyScalar(1.5); // m/s
-    vel.x += (Math.random()-0.5) * 0.3;
-    vel.z += (Math.random()-0.5) * 0.3;
+    const vel = upNormal.clone().multiplyScalar(1.6);
+    vel.x += (Math.random()-0.5) * 0.25;
+    vel.z += (Math.random()-0.5) * 0.25;
 
-    const rotSpeed = 8 + Math.random()*4; // rad/s
+    const rotSpeed = 9 + Math.random()*3; // rad/s
     this.coins.push({ mesh: coin, vel, rotSpeed, t: 0 });
 
-    // Score +1
     this.score += 1;
   }
 
@@ -87,16 +87,15 @@ export class CoinManager {
       // Rotation
       c.mesh.rotateY(c.rotSpeed * dt);
 
-      // Fade out
+      // Fade-out
       const k = Math.min(1, c.t / LIFETIME);
-      const scale = 1 + 0.2 * Math.sin(k * Math.PI);
+      const scale = 1 + 0.25 * Math.sin(k * Math.PI);
       c.mesh.scale.setScalar(this.scale * scale);
 
       c.mesh.traverse(o => {
         if (o.isMesh && o.material && ('emissiveIntensity' in o.material)) {
-          o.material.emissiveIntensity = (1 - k) * 0.6;
+          o.material.emissiveIntensity = (1 - k) * 0.8;
           if ('opacity' in o.material) {
-            o.material.transparent = true;
             o.material.opacity = 1 - k;
           }
         }

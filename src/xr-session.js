@@ -21,6 +21,7 @@ export class XRApp {
     this._lastFrame = null;
 
     this._placedBlocks = false;
+    this._prevTime = null;
   }
 
   async startAR() {
@@ -31,7 +32,7 @@ export class XRApp {
     };
     const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
 
-    this.sceneRig = new SceneRig();
+    this.sceneRig = new SceneRig(); // hellere Beleuchtung in scene.js
     this.renderer = this.sceneRig.renderer;
     this.sceneRig.scene.add(this.world);
 
@@ -53,7 +54,7 @@ export class XRApp {
     });
 
     this.renderer.setAnimationLoop((t, frame) => this.onXRFrame(t, frame));
-    this.ui.toast('3 Blöcke erscheinen 1 m vor dir, 40 cm über dir.');
+    this.ui.toast('Vier Blöcke erscheinen um dich herum (1 m Abstand | +40 cm Höhe).');
     return true;
   }
 
@@ -67,6 +68,7 @@ export class XRApp {
     this.coins = null;
     this.world = new THREE.Group();
     this._placedBlocks = false;
+    this._prevTime = null;
   }
 
   end() {
@@ -75,6 +77,11 @@ export class XRApp {
   }
 
   async onXRFrame(t, frame) {
+    const now = performance.now();
+    if (this._prevTime == null) this._prevTime = now;
+    const dtMs = now - this._prevTime;
+    this._prevTime = now;
+
     this._lastFrame = frame;
 
     // Beim ersten gültigen ViewerPose: Blöcke platzieren
@@ -86,7 +93,7 @@ export class XRApp {
         const viewerPos = new THREE.Vector3(p.x, p.y, p.z);
         const viewerQuat = new THREE.Quaternion(o.x, o.y, o.z, o.w);
         await this.blocks.ensureLoaded();
-        this.blocks.placeRelativeTo(viewerPos, viewerQuat); // 1m vor, 0.4m über, 3 Stück
+        this.blocks.placeAroundViewer(viewerPos, viewerQuat); // 4 Blöcke: vorne/hinten/links/rechts
         this._placedBlocks = true;
       }
     }
@@ -95,21 +102,19 @@ export class XRApp {
     const session = this.renderer.xr.getSession();
     const spheres = getInteractionSpheres(frame, this.refSpace, session.inputSources);
 
-    // Kollision Blöcke <-> Sphären → ggf. Coin-Burst
+    // Idle-Rotation + Bounce/Hit
+    this.blocks.updateIdle(dtMs);
     const coinBursts = this.blocks.testHitsAndGetBursts(spheres);
     for (const b of coinBursts) {
-      // Spawn Münze oberhalb des Blocks, normal nach oben
       this.coins.spawnBurst(b.spawnPos, b.upNormal);
-      // Score erhöhen
       this.ui.setScore(this.coins.score);
     }
 
     // Coins animieren (Flug/Rotation/Auflösen)
-    this.coins.update();
+    this.coins.update(dtMs);
 
     // FPS
     this._frameCount++;
-    const now = performance.now();
     if (now - this._lastFpsSample > 500) {
       const fps = Math.round((this._frameCount * 1000) / (now - this._lastFpsSample));
       this._frameCount = 0; this._lastFpsSample = now;
