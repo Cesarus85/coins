@@ -16,8 +16,13 @@ export class CoinManager {
     this.score = 0;
   }
 
-  async _ensureLoaded() {
+  // Öffentliches Ensure (für Warmup-Aufruf von außen)
+  async ensureLoaded() {
     if (this.template) return;
+    await this._loadTemplate();
+  }
+
+  async _loadTemplate() {
     const gltf = await this._load('./assets/coin.glb');
     const root = gltf.scene || gltf.scenes?.[0];
     if (!root) throw new Error('coin.glb ohne Szene');
@@ -43,8 +48,21 @@ export class CoinManager {
     this.template = root;
   }
 
+  // Kleine Helferinstanz, damit der Renderer beim Warmup Materialien/Shader sieht
+  _makePreviewInstance() {
+    if (!this.template) return null;
+    const coin = this.template.clone(true);
+    coin.scale.setScalar(this.scale);
+    coin.position.set(0, -100, 0); // weit außerhalb des Sichtbereichs
+    // leichte Transformationen wie im echten Spawn
+    coin.rotateY(Math.random() * Math.PI * 2);
+    coin.rotateX(Math.PI / 2);
+    return coin;
+  }
+
   async spawnBurst(worldPos, upNormal = new THREE.Vector3(0,1,0)) {
-    await this._ensureLoaded();
+    if (!this.template) await this._loadTemplate();
+
     const coin = this.template.clone(true);
     coin.scale.setScalar(this.scale);
     coin.position.copy(worldPos);

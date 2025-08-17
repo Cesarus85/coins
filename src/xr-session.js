@@ -22,6 +22,7 @@ export class XRApp {
 
     this._placedBlocks = false;
     this._prevTime = null;
+    this._didWarmup = false;
   }
 
   async startAR() {
@@ -32,7 +33,7 @@ export class XRApp {
     };
     const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
 
-    this.sceneRig = new SceneRig(); // hellere Beleuchtung in scene.js
+    this.sceneRig = new SceneRig();
     this.renderer = this.sceneRig.renderer;
     this.sceneRig.scene.add(this.world);
 
@@ -58,17 +59,67 @@ export class XRApp {
     return true;
   }
 
+  /**
+   * Einmaliges Warmup: Alle Shader/Programme kompilieren, bevor das Spiel „richtig“ loslegt.
+   * - Läuft nach Platzierung der Blöcke und nachdem die Münz-/Block-Modelle geladen sind.
+   * - Legt kurz ein unsichtbares Coin-Exemplar an, damit Material-/Skin-Varianten kompiliert werden.
+   */
+  async _warmupPipelinesOnce() {
+    if (this._didWarmup) return;
+    try {
+      // Sicherstellen, dass Templates geladen sind
+      await this.blocks.ensureLoaded();
+      await this.coins.ensureLoaded();
+
+      // Temporäres, unsichtbares Coin-Exemplar hinzufügen, damit die Pipeline alle Pfade sieht
+      const tempCoin = this.coins._makePreviewInstance?.();
+      if (tempCoin) {
+        tempCoin.visible = false;
+        this.sceneRig.scene.add(tempCoin);
+      }
+
+      // WebXR-Kamera vom Renderer holen und compilieren
+      const xrCam = this.renderer.xr.getCamera(this.sceneRig.camera);
+      this.renderer.compile(this.sceneRig.scene, xrCam);
+
+      // Ein „Trocken-Render“ (ohne sichtbare Änderung) hilft einigen Runtimes zusätzlich
+      this.renderer.render(this.sceneRig.scene, this.sceneRig.camera);
+
+      // Aufräumen
+      if (tempCoin) tempCoin.removeFromParent();
+
+      this._didWarmup = true;
+      // Optionales Feedback
+      // this.ui.toast('Pipelines vorgewärmt.');
+    } catch (e) {
+      console.warn('Warmup fehlgeschlagen (wird übersprungen):', e);
+    }
+  }
+
   cleanup() {
-    this.renderer?.setAnimationLoop(null);
-    this.renderer?.dispose();
-    this.sceneRig?.dispose();
+    // Renderloop stoppen
+    try { this.renderer?.setAnimationLoop(null); } catch {}
+    // Three-Objekte freigeben
+    try { this.sceneRig?.dispose(); } catch {}
+
+    // WebGL-Context explizit freigeben (wichtig gegen „Context-Leaks“)
+    try {
+      if (this.renderer) {
+        this.renderer.forceContextLoss?.();
+        this.renderer.domElement?.remove();
+      }
+    } catch {}
+
+    // Referenzen löschen
     this.renderer = null;
     this.sceneRig = null;
     this.blocks = null;
     this.coins = null;
     this.world = new THREE.Group();
+
     this._placedBlocks = false;
     this._prevTime = null;
+    this._didWarmup = false;
   }
 
   end() {
@@ -84,7 +135,7 @@ export class XRApp {
 
     this._lastFrame = frame;
 
-    // Beim ersten gültigen ViewerPose: Blöcke platzieren
+    // Beim ersten gültigen ViewerPose: Blöcke platzieren → dann Warmup
     if (!this._placedBlocks) {
       const vp = frame.getViewerPose(this.refSpace);
       if (vp) {
@@ -92,9 +143,13 @@ export class XRApp {
         const o = vp.transform.orientation;
         const viewerPos = new THREE.Vector3(p.x, p.y, p.z);
         const viewerQuat = new THREE.Quaternion(o.x, o.y, o.z, o.w);
+
         await this.blocks.ensureLoaded();
-        this.blocks.placeAroundViewer(viewerPos, viewerQuat); // 4 Blöcke: vorne/hinten/links/rechts
+        this.blocks.placeAroundViewer(viewerPos, viewerQuat);
         this._placedBlocks = true;
+
+        // Direkt nach Platzierung + geladenen Assets: Pipelines vorwärmen
+        await this._warmupPipelinesOnce();
       }
     }
 
