@@ -7,12 +7,12 @@ const GRAVITY = -3.8;        // m/s²
 const LIFETIME = 1.2;        // s
 
 // Kompaktere Sparkle-Settings (deutlich kleiner & enger)
-const SPARK_COUNT    = 8;    // viel weniger Partikel
+const SPARK_COUNT    = 6;    // viel weniger Partikel
 const SPARK_LIFETIME = 0.35; // kürzer
 const SPARK_SPEED    = 0.5;  // langsamer
 const SPARK_GRAVITY  = -3.0;
-const SPARK_SIZE     = 6;    // kleiner
-const SPARK_CONE_DEG = 12;   // enger Kegel
+const SPARK_SIZE     = 3;    // kleiner
+const SPARK_CONE_DEG = 8;   // enger Kegel
 
 // Spawn-Offset (Münze & Funken) über Blockoberkante
 const COIN_SPAWN_LIFT = 0.12; // 12 cm
