@@ -6,13 +6,13 @@ const COIN_DIAMETER = 0.14;
 const GRAVITY = -3.8;        // m/s²
 const LIFETIME = 1.2;        // s
 
-// Kompaktere Sparkle-Settings
-const SPARK_COUNT    = 18;   // weniger Partikel
-const SPARK_LIFETIME = 0.5;  // s
-const SPARK_SPEED    = 0.8;  // m/s Start
-const SPARK_GRAVITY  = -3.0; // m/s²
-const SPARK_SIZE     = 8;    // px
-const SPARK_CONE_DEG = 25;   // Kegelöffnung um 'up'
+// Kompaktere Sparkle-Settings (deutlich kleiner & enger)
+const SPARK_COUNT    = 8;    // viel weniger Partikel
+const SPARK_LIFETIME = 0.35; // kürzer
+const SPARK_SPEED    = 0.5;  // langsamer
+const SPARK_GRAVITY  = -3.0;
+const SPARK_SIZE     = 6;    // kleiner
+const SPARK_CONE_DEG = 12;   // enger Kegel
 
 // Spawn-Offset (Münze & Funken) über Blockoberkante
 const COIN_SPAWN_LIFT = 0.12; // 12 cm
@@ -28,7 +28,6 @@ export class CoinManager {
     this.score = 0;
   }
 
-  // Öffentlich, damit von außen (Warmup) aufgerufen werden kann
   async ensureLoaded() {
     if (this.template) return;
     await this._loadTemplate();
@@ -59,7 +58,6 @@ export class CoinManager {
     this.template = root;
   }
 
-  // Für Pipeline-Warmup (unsichtbare, weit außerhalb liegende Instanz)
   _makePreviewInstance() {
     if (!this.template) return null;
     const coin = this.template.clone(true);
@@ -77,7 +75,7 @@ export class CoinManager {
     const coin = this.template.clone(true);
     coin.scale.setScalar(this.scale);
 
-    // Coin höher spawnen (12 cm statt 3 cm)
+    // Coin deutlich über Oberkante spawnen (12 cm)
     const liftedPos = worldPos.clone().add(upNormal.clone().multiplyScalar(COIN_SPAWN_LIFT));
     coin.position.copy(liftedPos);
 
@@ -95,15 +93,15 @@ export class CoinManager {
 
     this.scene.add(coin);
 
-    // Startgeschwindigkeit: nach oben + kompaktere seitliche Varianz
+    // Startgeschwindigkeit: nach oben + sehr kleine seitliche Varianz (kompakt)
     const vel = upNormal.clone().multiplyScalar(1.4);
-    vel.x += (Math.random() - 0.5) * 0.15;
-    vel.z += (Math.random() - 0.5) * 0.15;
+    vel.x += (Math.random() - 0.5) * 0.08;
+    vel.z += (Math.random() - 0.5) * 0.08;
 
     const rotSpeed = 9 + Math.random() * 3; // rad/s
     this.coins.push({ mesh: coin, vel, rotSpeed, t: 0 });
 
-    // === Sparkles (kompakt über dem Block) ===
+    // === Sparkles (deutlich kompakter) ===
     this._spawnSparks(liftedPos, upNormal);
 
     this.score += 1;
@@ -117,20 +115,19 @@ export class CoinManager {
 
     for (let i = 0; i < SPARK_COUNT; i++) {
       const idx = i * 3;
-      // Startposition: exakt am Spawnpunkt (kompakt)
       positions[idx]   = worldPos.x;
       positions[idx+1] = worldPos.y;
       positions[idx+2] = worldPos.z;
 
-      // Richtung in engem Kegel um 'upNormal'
+      // Richtung in sehr engem Kegel um 'upNormal'
       const dir = randomCone(upNormal, SPARK_CONE_DEG);
-      const speed = SPARK_SPEED * (0.8 + Math.random() * 0.4); // leichte Variation
+      const speed = SPARK_SPEED * (0.9 + Math.random() * 0.2);
       velocities[idx]   = dir.x * speed;
       velocities[idx+1] = dir.y * speed;
       velocities[idx+2] = dir.z * speed;
 
       // gold -> weiß Varianz
-      const c = new THREE.Color().setHSL(0.12 + Math.random()*0.06, 0.9, 0.6 + Math.random()*0.3);
+      const c = new THREE.Color().setHSL(0.12 + Math.random()*0.05, 0.9, 0.6 + Math.random()*0.25);
       colors[idx] = c.r; colors[idx+1] = c.g; colors[idx+2] = c.b;
     }
 
@@ -142,7 +139,8 @@ export class CoinManager {
       vertexColors: true,
       transparent: true,
       opacity: 1.0,
-      depthWrite: false
+      depthWrite: false,
+      sizeAttenuation: true
     });
 
     const points = new THREE.Points(geom, mat);
@@ -174,9 +172,7 @@ export class CoinManager {
       c.mesh.traverse(o => {
         if (o.isMesh && o.material && ('emissiveIntensity' in o.material)) {
           o.material.emissiveIntensity = (1 - k) * 0.8;
-          if ('opacity' in o.material) {
-            o.material.opacity = 1 - k;
-          }
+          if ('opacity' in o.material) o.material.opacity = 1 - k;
         }
       });
 
@@ -197,16 +193,13 @@ export class CoinManager {
 
       for (let p = 0; p < posAttr.count; p++) {
         const idx = p * 3;
-        // Gravitation
         vels[idx+1] += SPARK_GRAVITY * dt;
-        // Position
         posAttr.array[idx]   += vels[idx] * dt;
         posAttr.array[idx+1] += vels[idx+1] * dt;
         posAttr.array[idx+2] += vels[idx+2] * dt;
       }
       posAttr.needsUpdate = true;
 
-      // weich ausfaden
       s.points.material.opacity = 1 - k;
 
       if (s.t >= SPARK_LIFETIME) {
@@ -234,7 +227,6 @@ function randomCone(up, deg) {
   const y = Math.cos(phi);
   const z = Math.sin(phi) * Math.sin(theta);
 
-  // (0,1,0) -> up rotieren
   const from = new THREE.Vector3(0,1,0);
   const axis = new THREE.Vector3().crossVectors(from, up).normalize();
   const angle = Math.acos(THREE.MathUtils.clamp(from.dot(up), -1, 1));

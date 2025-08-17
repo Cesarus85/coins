@@ -2,21 +2,25 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // Zielwerte
-const FORWARD_DIST = 1.0;   // 1 m Abstand
-const HEIGHT_OFFSET = 0.40; // 40 cm über dem Nutzer
+const FORWARD_DIST = 1.0;    // 1 m Abstand
+const HEIGHT_OFFSET = 0.40;  // 40 cm über dem Nutzer
 const BLOCK_TARGET_SIZE = 0.30; // 30 cm Kantenlänge
-const IDLE_ROT_SPEED = 0.25;    // rad/s
-const BOUNCE_AMPLITUDE = 0.06;  // m
-const BOUNCE_DURATION  = 0.35;  // s
+const IDLE_ROT_SPEED = 0.25; // rad/s
+const BOUNCE_AMPLITUDE = 0.06; // m
+const BOUNCE_DURATION  = 0.35; // s
+
+// Anti-„Dauerfeuer“-Hysterese
+const REARM_NO_CONTACT_FRAMES = 8;    // erst re-armen, wenn ~8 Frames lang kein Kontakt war
+const MIN_FIRE_INTERVAL_S      = 0.35; // min. 350 ms zwischen zwei Auslösungen
 
 export class BlocksManager {
   constructor(scene) {
     this.scene = scene;
     this.loader = new GLTFLoader();
-    this.template = null; // GLB root (nicht zur Szene hinzufügen!)
-    // blocks: {mesh, aabb:Box3, bounceT:number, basePos:Vector3, armed:boolean}
+    this.template = null; // GLB root (nur Blaupause)
+    // blocks: {mesh, aabb, bounceT, basePos, armed, noContactFrames, lastFireAt}
     this.blocks = [];
-    this._placed = false; // Einmal-Guard
+    this._placed = false;
   }
 
   async ensureLoaded() {
@@ -42,14 +46,11 @@ export class BlocksManager {
       }
     });
 
-    // WICHTIG: Template bleibt nur als Blaupause – nicht zur Szene hinzufügen!
     this.template = root;
   }
 
   clear() {
-    for (const b of this.blocks) {
-      b.mesh?.removeFromParent();
-    }
+    for (const b of this.blocks) b.mesh?.removeFromParent();
     this.blocks.length = 0;
     this._placed = false;
   }
@@ -61,10 +62,7 @@ export class BlocksManager {
         if (o.isMesh) {
           o.geometry?.dispose?.();
           const m = o.material;
-          if (m) {
-            if (Array.isArray(m)) m.forEach(x => x.dispose?.());
-            else m.dispose?.();
-          }
+          if (m) Array.isArray(m) ? m.forEach(x => x.dispose?.()) : m.dispose?.();
         }
       });
     }
@@ -72,7 +70,7 @@ export class BlocksManager {
   }
 
   placeAroundViewer(viewerPos, viewerQuat) {
-    if (this._placed) return; // Einmal-Guard
+    if (this._placed) return;
     this._placed = true;
 
     // Basisachsen
@@ -91,11 +89,9 @@ export class BlocksManager {
     for (const pos of positions) {
       const mesh = this.template.clone(true);
       mesh.position.copy(pos);
-      // Blick zum Nutzer (nur um Y)
       const look = new THREE.Vector3(viewerPos.x, mesh.position.y, viewerPos.z);
       mesh.lookAt(look);
       mesh.frustumCulled = true;
-
       this.scene.add(mesh);
 
       const aabb = new THREE.Box3().setFromObject(mesh);
@@ -104,7 +100,9 @@ export class BlocksManager {
         aabb,
         bounceT: 0,
         basePos: mesh.position.clone(),
-        armed: true // <-- nur „ein Coin pro Schlag“: braucht zuvor Kontaktende
+        armed: true,
+        noContactFrames: 0,
+        lastFireAt: -Infinity
       });
     }
   }
@@ -114,9 +112,7 @@ export class BlocksManager {
 
     // Notbremse: max. 4 Blöcke
     if (this.blocks.length > 4) {
-      for (let i = 4; i < this.blocks.length; i++) {
-        this.blocks[i].mesh?.removeFromParent();
-      }
+      for (let i = 4; i < this.blocks.length; i++) this.blocks[i].mesh?.removeFromParent();
       this.blocks.length = 4;
     }
 
@@ -142,53 +138,70 @@ export class BlocksManager {
   }
 
   /**
-   * Kollisionserkennung mit „armed“-Logik:
-   * - Triggert NUR, wenn der Block derzeit ARMED ist und es JETZT zu Kontakt kommt (von unten/Seite).
-   * - Bleibt gesperrt (armed=false), solange noch Kontakt besteht.
-   * - Wird erst wieder ARMED, wenn keinerlei Kontakt mehr vorliegt.
+   * Kollisionen und Münz-Spawn mit robuster Sphere-AABB-Test + Hysterese:
+   * - Feuert NUR wenn: armed === true, Kontakt JETZT besteht, nicht von oben, und Mindestabstand seit letztem Fire eingehalten.
+   * - Rearm erst, wenn mehrere Frames lang KEIN Kontakt besteht.
    */
   testHitsAndGetBursts(spheres) {
     const bursts = [];
     const up = new THREE.Vector3(0, 1, 0);
+    const now = performance.now() / 1000;
 
     for (const block of this.blocks) {
-      // AABB frisch
       block.aabb.setFromObject(block.mesh);
 
       let anyContact = false;
-      let firedThisFrame = false;
+      let fired = false;
+
+      // Mittelpunkt der AABB (für Top-Center & Richtungscheck)
+      const aabbCenter = block.aabb.getCenter(new THREE.Vector3());
 
       for (const s of spheres) {
-        // AABB um Sphere-Radius erweitern → grobe Intersection
-        const expanded = block.aabb.clone().expandByScalar(s.radius);
-        if (!expanded.containsPoint(s.center)) continue;
+        // Robuste Sphere vs AABB: Distanz vom Sphere-Zentrum zum nächstgelegenen Punkt der AABB
+        const closest = new THREE.Vector3(
+          THREE.MathUtils.clamp(s.center.x, block.aabb.min.x, block.aabb.max.x),
+          THREE.MathUtils.clamp(s.center.y, block.aabb.min.y, block.aabb.max.y),
+          THREE.MathUtils.clamp(s.center.z, block.aabb.min.z, block.aabb.max.z),
+        );
+        const dx = s.center.x - closest.x;
+        const dy = s.center.y - closest.y;
+        const dz = s.center.z - closest.z;
+        const distSq = dx*dx + dy*dy + dz*dz;
 
-        anyContact = true; // Es besteht aktuell Kontakt
+        // Kontakt, wenn Distanz <= Radius (mit leichter Reserve)
+        const rContact = s.radius * 1.02;
+        if (distSq > rContact * rContact) continue;
 
-        // Richtung prüfen (nicht von oben)
-        const center = expanded.getCenter(new THREE.Vector3());
-        const toBlock = center.clone().sub(s.center).normalize();
+        anyContact = true;
+
+        // Nicht von oben
+        const toBlock = aabbCenter.clone().sub(s.center).normalize();
         const fromAbove = toBlock.dot(up) < -0.4;
         if (fromAbove) continue;
 
-        // Nur auslösen, wenn ARMED und noch nicht in diesem Frame ausgelöst
-        if (block.armed && !firedThisFrame) {
-          // Top-Center (zentriert) als Spawn
-          const topCenter = new THREE.Vector3(center.x, block.aabb.max.y, center.z);
+        if (!fired && block.armed && (now - block.lastFireAt) >= MIN_FIRE_INTERVAL_S) {
+          // Top-Center (zentriert)
+          const topCenter = new THREE.Vector3(aabbCenter.x, block.aabb.max.y, aabbCenter.z);
           const spawnPos = topCenter.clone().add(up.clone().multiplyScalar(0.03)); // 3 cm darüber
 
           bursts.push({ spawnPos, upNormal: up.clone() });
 
-          // Trigger Bounce + DISARM
           block.bounceT = 1e-6;
           block.armed = false;
-          firedThisFrame = true;
+          block.lastFireAt = now;
+          fired = true;
         }
       }
 
-      // Re-Arm NUR wenn aktuell kein Kontakt besteht
+      // Rearm-Logik mit Hysterese: nur wenn mehrere Frames lang KEIN Kontakt
       if (!anyContact) {
-        block.armed = true;
+        block.noContactFrames++;
+        if (block.noContactFrames >= REARM_NO_CONTACT_FRAMES) {
+          block.armed = true;
+          block.noContactFrames = 0;
+        }
+      } else {
+        block.noContactFrames = 0; // solange Kontakt, nicht re-armen
       }
     }
 
