@@ -3,15 +3,19 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // Münze groß (4× vorher): Ø 14 cm
 const COIN_DIAMETER = 0.14;
-const GRAVITY = -3.8;      // m/s²
-const LIFETIME = 1.2;      // Sek.
+const GRAVITY = -3.8;        // m/s²
+const LIFETIME = 1.2;        // s
 
-// Partikel-Einstellungen
-const SPARK_COUNT = 28;
-const SPARK_LIFETIME = 0.5;   // Sek.
-const SPARK_SPEED = 1.2;      // m/s (Start)
-const SPARK_GRAVITY = -3.0;   // m/s²
-const SPARK_SIZE = 10;        // Pixel
+// Kompaktere Sparkle-Settings
+const SPARK_COUNT    = 18;   // weniger Partikel
+const SPARK_LIFETIME = 0.5;  // s
+const SPARK_SPEED    = 0.8;  // m/s Start
+const SPARK_GRAVITY  = -3.0; // m/s²
+const SPARK_SIZE     = 8;    // px
+const SPARK_CONE_DEG = 25;   // Kegelöffnung um 'up'
+
+// Spawn-Offset (Münze & Funken) über Blockoberkante
+const COIN_SPAWN_LIFT = 0.12; // 12 cm
 
 export class CoinManager {
   constructor(scene) {
@@ -19,11 +23,12 @@ export class CoinManager {
     this.loader = new GLTFLoader();
     this.template = null;
     this.scale = 1;
-    this.coins = []; // {mesh, vel:Vector3, rotSpeed:number, t:number}
-    this.sparkSystems = []; // {points:THREE.Points, velocities:Float32Array, t:number}
+    this.coins = [];        // { mesh, vel:Vector3, rotSpeed:number, t:number }
+    this.sparkSystems = []; // { points:THREE.Points, velocities:Float32Array, t:number }
     this.score = 0;
   }
 
+  // Öffentlich, damit von außen (Warmup) aufgerufen werden kann
   async ensureLoaded() {
     if (this.template) return;
     await this._loadTemplate();
@@ -40,14 +45,13 @@ export class CoinManager {
     const srcDiameter = (isFinite(sphere.radius) && sphere.radius > 0) ? sphere.radius * 2 : 1;
     this.scale = COIN_DIAMETER / srcDiameter;
 
+    // Material etwas heller für Passthrough
     root.traverse(o => {
       if (o.isMesh && o.material) {
-        // Etwas „heller“ im Passthrough
         if (!o.material.emissive) o.material.emissive = new THREE.Color(0x6a5200);
         if ('emissiveIntensity' in o.material) o.material.emissiveIntensity = Math.max(0.35, o.material.emissiveIntensity ?? 0.35);
         if ('metalness' in o.material) o.material.metalness = Math.max(0.75, o.material.metalness ?? 0.75);
         if ('roughness' in o.material) o.material.roughness = Math.min(0.3, o.material.roughness ?? 0.3);
-        // für Fade-out
         if ('opacity' in o.material) { o.material.transparent = true; o.material.opacity = 1.0; }
       }
     });
@@ -55,11 +59,12 @@ export class CoinManager {
     this.template = root;
   }
 
+  // Für Pipeline-Warmup (unsichtbare, weit außerhalb liegende Instanz)
   _makePreviewInstance() {
     if (!this.template) return null;
     const coin = this.template.clone(true);
     coin.scale.setScalar(this.scale);
-    coin.position.set(0, -100, 0); // weit außerhalb
+    coin.position.set(0, -100, 0);
     coin.rotateY(Math.random() * Math.PI * 2);
     coin.rotateX(Math.PI / 2);
     return coin;
@@ -71,7 +76,12 @@ export class CoinManager {
     // === Coin ===
     const coin = this.template.clone(true);
     coin.scale.setScalar(this.scale);
-    coin.position.copy(worldPos);
+
+    // Coin höher spawnen (12 cm statt 3 cm)
+    const liftedPos = worldPos.clone().add(upNormal.clone().multiplyScalar(COIN_SPAWN_LIFT));
+    coin.position.copy(liftedPos);
+
+    // 90°-Drehung, zufällige Y-Rotation
     coin.rotateY(Math.random() * Math.PI * 2);
     coin.rotateX(Math.PI / 2);
 
@@ -85,16 +95,16 @@ export class CoinManager {
 
     this.scene.add(coin);
 
-    // Startgeschwindigkeit: nach oben + kleine seitliche Varianz
-    const vel = upNormal.clone().multiplyScalar(1.6);
-    vel.x += (Math.random()-0.5) * 0.25;
-    vel.z += (Math.random()-0.5) * 0.25;
+    // Startgeschwindigkeit: nach oben + kompaktere seitliche Varianz
+    const vel = upNormal.clone().multiplyScalar(1.4);
+    vel.x += (Math.random() - 0.5) * 0.15;
+    vel.z += (Math.random() - 0.5) * 0.15;
 
-    const rotSpeed = 9 + Math.random()*3; // rad/s
+    const rotSpeed = 9 + Math.random() * 3; // rad/s
     this.coins.push({ mesh: coin, vel, rotSpeed, t: 0 });
 
-    // === Sparkles ===
-    this._spawnSparks(worldPos, upNormal);
+    // === Sparkles (kompakt über dem Block) ===
+    this._spawnSparks(liftedPos, upNormal);
 
     this.score += 1;
   }
@@ -105,20 +115,21 @@ export class CoinManager {
     const velocities = new Float32Array(SPARK_COUNT * 3);
     const colors = new Float32Array(SPARK_COUNT * 3);
 
-    // Farbverlauf: gold -> weiß
     for (let i = 0; i < SPARK_COUNT; i++) {
       const idx = i * 3;
-      positions[idx] = worldPos.x;
+      // Startposition: exakt am Spawnpunkt (kompakt)
+      positions[idx]   = worldPos.x;
       positions[idx+1] = worldPos.y;
       positions[idx+2] = worldPos.z;
 
-      // Velocity in einer „Halbkugel“ nach oben
-      const dir = randomHemisphere(upNormal);
-      velocities[idx]   = dir.x * (SPARK_SPEED * (0.7 + Math.random()*0.6));
-      velocities[idx+1] = dir.y * (SPARK_SPEED * (0.7 + Math.random()*0.6));
-      velocities[idx+2] = dir.z * (SPARK_SPEED * (0.7 + Math.random()*0.6));
+      // Richtung in engem Kegel um 'upNormal'
+      const dir = randomCone(upNormal, SPARK_CONE_DEG);
+      const speed = SPARK_SPEED * (0.8 + Math.random() * 0.4); // leichte Variation
+      velocities[idx]   = dir.x * speed;
+      velocities[idx+1] = dir.y * speed;
+      velocities[idx+2] = dir.z * speed;
 
-      // leicht variiertes Gold/Weiß
+      // gold -> weiß Varianz
       const c = new THREE.Color().setHSL(0.12 + Math.random()*0.06, 0.9, 0.6 + Math.random()*0.3);
       colors[idx] = c.r; colors[idx+1] = c.g; colors[idx+2] = c.b;
     }
@@ -195,7 +206,7 @@ export class CoinManager {
       }
       posAttr.needsUpdate = true;
 
-      // Opazität weich ausfaden
+      // weich ausfaden
       s.points.material.opacity = 1 - k;
 
       if (s.t >= SPARK_LIFETIME) {
@@ -214,17 +225,16 @@ export class CoinManager {
   }
 }
 
-// Hilfsfunktion: Zufallsrichtung in Hemisphäre um 'up'
-function randomHemisphere(up) {
-  const u = Math.random();
-  const v = Math.random();
-  const theta = 2 * Math.PI * u;
-  const phi = Math.acos(v); // 0..pi/2 für obere Halbkugel erzwingen:
+// Zufallsrichtung in engem Kegel (deg) um 'up'
+function randomCone(up, deg) {
+  const halfAngle = THREE.MathUtils.degToRad(deg);
+  const theta = Math.random() * 2 * Math.PI;
+  const phi = Math.random() * halfAngle; // 0..halfAngle
   const x = Math.sin(phi) * Math.cos(theta);
   const y = Math.cos(phi);
   const z = Math.sin(phi) * Math.sin(theta);
 
-  // Rotationsbasis: align (0,1,0) auf 'up'
+  // (0,1,0) -> up rotieren
   const from = new THREE.Vector3(0,1,0);
   const axis = new THREE.Vector3().crossVectors(from, up).normalize();
   const angle = Math.acos(THREE.MathUtils.clamp(from.dot(up), -1, 1));
