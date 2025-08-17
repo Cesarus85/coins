@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AR Mario Blocks</title>
+  <link rel="stylesheet" href="./styles.css" />
+
+  <!-- Import Map: löst 'three' Bare Imports -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.166.1/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.166.1/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <main id="ui-root">
+    <h1>AR Mario Blocks</h1>
+    <p>Tippe auf „Starte AR“. 3 Blöcke erscheinen ca. 1 m vor dir und 40 cm über dir. Schlag unten/seitlich dagegen, um Münzen herauszuspringen.</p>
+    <button id="start-ar">Starte AR</button>
+
+    <div id="hud" hidden>
+      <div class="row">
+        <span id="score">Score: 0</span>
+        <span id="fps">FPS: –</span>
+      </div>
+      <div class="row">
+        <button id="end">Beenden</button>
+      </div>
+    </div>
+
+    <noscript>Bitte JavaScript aktivieren.</noscript>
+  </main>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
