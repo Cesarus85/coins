@@ -14,7 +14,8 @@ export class BlocksManager {
     this.scene = scene;
     this.loader = new GLTFLoader();
     this.template = null; // GLB root (nicht zur Szene hinzufügen!)
-    this.blocks = [];     // {mesh, aabb:Box3, cooldown, bounceT, basePos:Vector3}
+    // blocks: {mesh, aabb:Box3, bounceT:number, basePos:Vector3, armed:boolean}
+    this.blocks = [];
     this._placed = false; // Einmal-Guard
   }
 
@@ -48,7 +49,6 @@ export class BlocksManager {
   clear() {
     for (const b of this.blocks) {
       b.mesh?.removeFromParent();
-      // Geometrie/Materialien nicht entsorgen, weil von mehreren Klonen geteilt sein könnten
     }
     this.blocks.length = 0;
     this._placed = false;
@@ -56,7 +56,6 @@ export class BlocksManager {
 
   dispose() {
     this.clear();
-    // Template aufräumen
     if (this.template) {
       this.template.traverse(o => {
         if (o.isMesh) {
@@ -95,8 +94,6 @@ export class BlocksManager {
       // Blick zum Nutzer (nur um Y)
       const look = new THREE.Vector3(viewerPos.x, mesh.position.y, viewerPos.z);
       mesh.lookAt(look);
-
-      // Sicherheitsmaßnahme: frustumCulled aktiv lassen (Standard)
       mesh.frustumCulled = true;
 
       this.scene.add(mesh);
@@ -105,9 +102,9 @@ export class BlocksManager {
       this.blocks.push({
         mesh,
         aabb,
-        cooldown: 0,
         bounceT: 0,
-        basePos: mesh.position.clone()
+        basePos: mesh.position.clone(),
+        armed: true // <-- nur „ein Coin pro Schlag“: braucht zuvor Kontaktende
       });
     }
   }
@@ -115,14 +112,12 @@ export class BlocksManager {
   updateIdle(dtMs) {
     const dt = (dtMs ?? 16.666) / 1000;
 
-    // **Notbremse**: sollten sich aus irgendeinem Grund Duplikate eingeschlichen haben,
-    // entferne alles über 4.
+    // Notbremse: max. 4 Blöcke
     if (this.blocks.length > 4) {
       for (let i = 4; i < this.blocks.length; i++) {
         this.blocks[i].mesh?.removeFromParent();
       }
       this.blocks.length = 4;
-      // Kein return – wir updaten die verbliebenen 4 regulär weiter
     }
 
     for (const b of this.blocks) {
@@ -146,40 +141,57 @@ export class BlocksManager {
     }
   }
 
-  // Kollisionen und Münz-Spawn
+  /**
+   * Kollisionserkennung mit „armed“-Logik:
+   * - Triggert NUR, wenn der Block derzeit ARMED ist und es JETZT zu Kontakt kommt (von unten/Seite).
+   * - Bleibt gesperrt (armed=false), solange noch Kontakt besteht.
+   * - Wird erst wieder ARMED, wenn keinerlei Kontakt mehr vorliegt.
+   */
   testHitsAndGetBursts(spheres) {
     const bursts = [];
-    for (const block of this.blocks) {
-      if (block.cooldown > 0) block.cooldown -= 1;
+    const up = new THREE.Vector3(0, 1, 0);
 
+    for (const block of this.blocks) {
       // AABB frisch
       block.aabb.setFromObject(block.mesh);
 
+      let anyContact = false;
+      let firedThisFrame = false;
+
       for (const s of spheres) {
-        // Bounding-Box „aufblasen“
+        // AABB um Sphere-Radius erweitern → grobe Intersection
         const expanded = block.aabb.clone().expandByScalar(s.radius);
         if (!expanded.containsPoint(s.center)) continue;
 
-        // Nicht von oben
+        anyContact = true; // Es besteht aktuell Kontakt
+
+        // Richtung prüfen (nicht von oben)
         const center = expanded.getCenter(new THREE.Vector3());
         const toBlock = center.clone().sub(s.center).normalize();
-        const up = new THREE.Vector3(0, 1, 0);
         const fromAbove = toBlock.dot(up) < -0.4;
         if (fromAbove) continue;
 
-        if (block.cooldown <= 0) {
-          // Top-Center (zentriert)
+        // Nur auslösen, wenn ARMED und noch nicht in diesem Frame ausgelöst
+        if (block.armed && !firedThisFrame) {
+          // Top-Center (zentriert) als Spawn
           const topCenter = new THREE.Vector3(center.x, block.aabb.max.y, center.z);
           const spawnPos = topCenter.clone().add(up.clone().multiplyScalar(0.03)); // 3 cm darüber
 
           bursts.push({ spawnPos, upNormal: up.clone() });
 
-          // Trigger Bounce + Cooldown
+          // Trigger Bounce + DISARM
           block.bounceT = 1e-6;
-          block.cooldown = 30; // ~0.5 s
+          block.armed = false;
+          firedThisFrame = true;
         }
       }
+
+      // Re-Arm NUR wenn aktuell kein Kontakt besteht
+      if (!anyContact) {
+        block.armed = true;
+      }
     }
+
     return bursts;
   }
 
