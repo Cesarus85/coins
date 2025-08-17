@@ -1,11 +1,11 @@
-import * as THREE from 'https://unpkg.com/three@0.166.1/build/three.module.js';
+import * as THREE from 'three';
 
 // Liefert Interaktionssphären von Controllern & Händen.
 export function getInteractionSpheres(frame, refSpace, inputSources) {
   const spheres = [];
 
   for (const input of inputSources) {
-    // Controller (Grip bevorzugt, sonst TargetRay)
+    // Controller (Grip bevorzugt)
     if (input.gripSpace) {
       const pose = frame.getPose(input.gripSpace, refSpace);
       if (pose) {
@@ -24,11 +24,10 @@ export function getInteractionSpheres(frame, refSpace, inputSources) {
       }
     }
 
-    // Hand-Tracking
+    // Hand-Tracking (optional)
     if (input.hand) {
       const tip = input.hand.get('index-finger-tip');
-      const palm = input.hand.get('wrist');
-
+      const knuckle = input.hand.get('wrist');
       if (tip) {
         const tipPose = frame.getJointPose(tip, refSpace);
         if (tipPose) {
@@ -38,11 +37,11 @@ export function getInteractionSpheres(frame, refSpace, inputSources) {
           });
         }
       }
-      if (palm) {
-        const palmPose = frame.getJointPose(palm, refSpace);
-        if (palmPose) {
+      if (knuckle) {
+        const kPose = frame.getJointPose(knuckle, refSpace);
+        if (kPose) {
           spheres.push({
-            center: new THREE.Vector3(palmPose.transform.position.x, palmPose.transform.position.y, palmPose.transform.position.z),
+            center: new THREE.Vector3(kPose.transform.position.x, kPose.transform.position.y, kPose.transform.position.z),
             radius: 0.06
           });
         }

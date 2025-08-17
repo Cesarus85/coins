@@ -1,7 +1,6 @@
-import * as THREE from 'https://unpkg.com/three@0.166.1/build/three.module.js';
+import * as THREE from 'three';
 import { SceneRig } from './scene.js';
-import { PlaneTracker } from './planes.js';
-import { choosePlacements } from './placement.js';
+import { BlocksManager } from './blocks.js';
 import { CoinManager } from './coins.js';
 import { getInteractionSpheres } from './input.js';
 
@@ -13,22 +12,21 @@ export class XRApp {
     this.refSpace = null;
     this.viewerSpace = null;
 
-    this.support = { planes: false, anchors: false, hitTest: false, hands: false, domOverlay: false };
-    this.planeTracker = null;
+    this.blocks = null;
     this.coins = null;
     this.world = new THREE.Group();
-    this.debugPlanes = false;
 
     this._lastFpsSample = performance.now();
     this._frameCount = 0;
-    this._didPlaceInitial = false;
     this._lastFrame = null;
+
+    this._placedBlocks = false;
   }
 
   async startAR() {
     const sessionInit = {
       requiredFeatures: ['local-floor'],
-      optionalFeatures: ['plane-detection', 'hit-test', 'anchors', 'hand-tracking', 'dom-overlay'],
+      optionalFeatures: ['dom-overlay', 'hand-tracking'],
       domOverlay: { root: document.body }
     };
     const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
@@ -40,12 +38,7 @@ export class XRApp {
     this.refSpace = await session.requestReferenceSpace('local-floor');
     this.viewerSpace = await session.requestReferenceSpace('viewer');
 
-    this.support.domOverlay = !!session.domOverlayState;
-    this.support.hitTest = typeof session.requestHitTestSource === 'function';
-    this.support.anchors = ('createAnchor' in XRFrame.prototype) || ('createAnchor' in XRHitTestResult.prototype);
-    this.support.planes = true;
-
-    this.planeTracker = new PlaneTracker();
+    this.blocks = new BlocksManager(this.sceneRig.scene);
     this.coins = new CoinManager(this.sceneRig.scene);
 
     this.renderer.xr.enabled = true;
@@ -60,7 +53,7 @@ export class XRApp {
     });
 
     this.renderer.setAnimationLoop((t, frame) => this.onXRFrame(t, frame));
-    this.ui.toast('Scanne Boden & Wände – Münzen erscheinen automatisch.');
+    this.ui.toast('3 Blöcke erscheinen 1 m vor dir, 40 cm über dir.');
     return true;
   }
 
@@ -70,10 +63,10 @@ export class XRApp {
     this.sceneRig?.dispose();
     this.renderer = null;
     this.sceneRig = null;
-    this.planeTracker = null;
+    this.blocks = null;
     this.coins = null;
     this.world = new THREE.Group();
-    this._didPlaceInitial = false;
+    this._placedBlocks = false;
   }
 
   end() {
@@ -81,82 +74,40 @@ export class XRApp {
     if (session) session.end();
   }
 
-  setDebugPlanes(enabled) {
-    this.debugPlanes = enabled;
-    this.planeTracker?.setDebug(enabled, this.sceneRig?.scene);
-  }
-
-  respawnCoins() {
-    this._placeCoinsFromLatest();
-  }
-
-  async _placeCoinsFromLatest() {
-    const frame = this._lastFrame;
-    if (!frame) return;
-
-    const { floorPlane, wallPlanes, planeCount } = this.planeTracker.classify(frame, this.refSpace);
-    this.ui.setPlanes(planeCount);
-
-    const viewerPose = frame.getViewerPose(this.refSpace);
-    const viewerPos = viewerPose ? new THREE.Vector3(
-      viewerPose.transform.position.x,
-      viewerPose.transform.position.y,
-      viewerPose.transform.position.z
-    ) : new THREE.Vector3();
-
-    if (!floorPlane && !wallPlanes.length && this.support.hitTest) {
-      const hitSource = await this.renderer.xr.getSession().requestHitTestSource({ space: this.viewerSpace });
-      const hits = frame.getHitTestResults(hitSource);
-      if (hits.length) {
-        const hitPose = hits[0].getPose(this.refSpace);
-        this.coins.spawnClusterAtPose(hitPose, { floorCount: 10, radius: 0.8 });
-        hitSource.cancel();
-        return;
-      }
-      hitSource.cancel();
-      this.ui.toast('Keine Ebenen erkannt – bewege dich oder beleuchte den Raum besser.');
-      return;
-    }
-
-    // Placements bestimmen
-    let placements = choosePlacements(frame, this.refSpace, floorPlane, wallPlanes, {
-      floorCount: 16,
-      wallCountPerPlane: 3,
-      minSpacing: 0.5
-    });
-
-    // **Spielbereich einschränken**: max. Distanz zum Viewer (z. B. 4 m)
-    const MAX_DIST = 4.0;
-    placements = placements.filter(p => {
-      const d = viewerPos.distanceTo(p.pose.position);
-      return d <= MAX_DIST;
-    });
-
-    const useAnchors = this.support.anchors;
-    this.coins.clear();
-    for (const p of placements) {
-      await this.coins.spawnAtPose(frame, this.refSpace, p.pose, {
-        useAnchors,
-        meta: { kind: p.kind, normal: p.normal }
-      });
-    }
-  }
-
   async onXRFrame(t, frame) {
     this._lastFrame = frame;
 
-    const planeCount = this.planeTracker.update(frame, this.refSpace, this.sceneRig.scene);
-    this.ui.setPlanes(planeCount);
-
-    if (!this._didPlaceInitial && (planeCount > 0 || !this.support.planes)) {
-      this._didPlaceInitial = true;
-      await this._placeCoinsFromLatest();
+    // Beim ersten gültigen ViewerPose: Blöcke platzieren
+    if (!this._placedBlocks) {
+      const vp = frame.getViewerPose(this.refSpace);
+      if (vp) {
+        const p = vp.transform.position;
+        const o = vp.transform.orientation;
+        const viewerPos = new THREE.Vector3(p.x, p.y, p.z);
+        const viewerQuat = new THREE.Quaternion(o.x, o.y, o.z, o.w);
+        await this.blocks.ensureLoaded();
+        this.blocks.placeRelativeTo(viewerPos, viewerQuat); // 1m vor, 0.4m über, 3 Stück
+        this._placedBlocks = true;
+      }
     }
 
+    // Eingabe-Sphären (Controller/Hand)
     const session = this.renderer.xr.getSession();
     const spheres = getInteractionSpheres(frame, this.refSpace, session.inputSources);
-    this.coins.testCollect(spheres, frame, this.refSpace, this.ui);
 
+    // Kollision Blöcke <-> Sphären → ggf. Coin-Burst
+    const coinBursts = this.blocks.testHitsAndGetBursts(spheres);
+    for (const b of coinBursts) {
+      // Spawn Münze oberhalb des Blocks, normal nach oben
+      this.coins.spawnBurst(b.spawnPos, b.upNormal);
+      // Score erhöhen
+      this.ui.setScore(this.coins.score);
+    }
+
+    // Coins animieren (Flug/Rotation/Auflösen)
+    this.coins.update();
+
+    // FPS
     this._frameCount++;
     const now = performance.now();
     if (now - this._lastFpsSample > 500) {

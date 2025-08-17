@@ -1,4 +1,4 @@
-import * as THREE from 'https://unpkg.com/three@0.166.1/build/three.module.js';
+import * as THREE from 'three';
 
 export class SceneRig {
   constructor() {
@@ -12,7 +12,7 @@ export class SceneRig {
     document.body.appendChild(this.renderer.domElement);
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
-    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    const dir  = new THREE.DirectionalLight(0xffffff, 0.6);
     dir.position.set(0.5, 1.0, 0.2);
     this.scene.add(hemi, dir);
 
