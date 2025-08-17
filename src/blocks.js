@@ -5,7 +5,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 const FORWARD_DIST = 1.0;   // 1 m Abstand
 const HEIGHT_OFFSET = 0.40; // 40 cm über dem Nutzer
 const BLOCK_TARGET_SIZE = 0.30; // 30 cm Kantenlänge
-const IDLE_ROT_SPEED = 0.25;    // rad/s (langsam um Y drehen)
+const IDLE_ROT_SPEED = 0.25;    // rad/s
 const BOUNCE_AMPLITUDE = 0.06;  // m
 const BOUNCE_DURATION  = 0.35;  // s
 
@@ -13,8 +13,9 @@ export class BlocksManager {
   constructor(scene) {
     this.scene = scene;
     this.loader = new GLTFLoader();
-    this.template = null; // GLB root
-    this.blocks = []; // {mesh, aabb:Box3, cooldown, bounceT, basePos:Vector3}
+    this.template = null; // GLB root (nicht zur Szene hinzufügen!)
+    this.blocks = [];     // {mesh, aabb:Box3, cooldown, bounceT, basePos:Vector3}
+    this._placed = false; // Einmal-Guard
   }
 
   async ensureLoaded() {
@@ -31,7 +32,7 @@ export class BlocksManager {
     const scale = BLOCK_TARGET_SIZE / srcEdge;
     root.scale.setScalar(scale);
 
-    // Für Passthrough etwas „hellere“ Oberfläche
+    // Heller für Passthrough
     root.traverse(o => {
       if (o.isMesh && o.material) {
         if ('metalness' in o.material) o.material.metalness = Math.min(0.2, o.material.metalness ?? 0.2);
@@ -40,29 +41,63 @@ export class BlocksManager {
       }
     });
 
+    // WICHTIG: Template bleibt nur als Blaupause – nicht zur Szene hinzufügen!
     this.template = root;
   }
 
+  clear() {
+    for (const b of this.blocks) {
+      b.mesh?.removeFromParent();
+      // Geometrie/Materialien nicht entsorgen, weil von mehreren Klonen geteilt sein könnten
+    }
+    this.blocks.length = 0;
+    this._placed = false;
+  }
+
+  dispose() {
+    this.clear();
+    // Template aufräumen
+    if (this.template) {
+      this.template.traverse(o => {
+        if (o.isMesh) {
+          o.geometry?.dispose?.();
+          const m = o.material;
+          if (m) {
+            if (Array.isArray(m)) m.forEach(x => x.dispose?.());
+            else m.dispose?.();
+          }
+        }
+      });
+    }
+    this.template = null;
+  }
+
   placeAroundViewer(viewerPos, viewerQuat) {
+    if (this._placed) return; // Einmal-Guard
+    this._placed = true;
+
     // Basisachsen
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(viewerQuat).normalize();
     const right   = new THREE.Vector3(1, 0, 0).applyQuaternion(viewerQuat).normalize();
     const up      = new THREE.Vector3(0, 1, 0);
 
-    // Vier Richtungen
+    // Vier Positionen: vorne, hinten, rechts, links
     const positions = [
-      viewerPos.clone().add(forward.clone().multiplyScalar(FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),     // vorne
-      viewerPos.clone().add(forward.clone().multiplyScalar(-FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),    // hinten
-      viewerPos.clone().add(right.clone().multiplyScalar(FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),       // rechts
-      viewerPos.clone().add(right.clone().multiplyScalar(-FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),      // links
+      viewerPos.clone().add(forward.clone().multiplyScalar(FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),
+      viewerPos.clone().add(forward.clone().multiplyScalar(-FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),
+      viewerPos.clone().add(right.clone().multiplyScalar(FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),
+      viewerPos.clone().add(right.clone().multiplyScalar(-FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),
     ];
 
     for (const pos of positions) {
       const mesh = this.template.clone(true);
       mesh.position.copy(pos);
-      // Jeder Block zeigt zum Nutzer (nur um Y drehen)
+      // Blick zum Nutzer (nur um Y)
       const look = new THREE.Vector3(viewerPos.x, mesh.position.y, viewerPos.z);
       mesh.lookAt(look);
+
+      // Sicherheitsmaßnahme: frustumCulled aktiv lassen (Standard)
+      mesh.frustumCulled = true;
 
       this.scene.add(mesh);
 
@@ -71,7 +106,7 @@ export class BlocksManager {
         mesh,
         aabb,
         cooldown: 0,
-        bounceT: 0,                 // 0..BOUNCE_DURATION → aktiver Bounce
+        bounceT: 0,
         basePos: mesh.position.clone()
       });
     }
@@ -79,19 +114,30 @@ export class BlocksManager {
 
   updateIdle(dtMs) {
     const dt = (dtMs ?? 16.666) / 1000;
+
+    // **Notbremse**: sollten sich aus irgendeinem Grund Duplikate eingeschlichen haben,
+    // entferne alles über 4.
+    if (this.blocks.length > 4) {
+      for (let i = 4; i < this.blocks.length; i++) {
+        this.blocks[i].mesh?.removeFromParent();
+      }
+      this.blocks.length = 4;
+      // Kein return – wir updaten die verbliebenen 4 regulär weiter
+    }
+
     for (const b of this.blocks) {
       // Idle-Rotation
       b.mesh.rotateY(IDLE_ROT_SPEED * dt);
 
-      // Bounce-Animation (Sinus-Halbperiode)
+      // Bounce-Animation
       if (b.bounceT > 0) {
         b.bounceT = Math.min(BOUNCE_DURATION, b.bounceT + dt);
         const k = b.bounceT / BOUNCE_DURATION; // 0..1
-        const yOff = Math.sin(k * Math.PI) * BOUNCE_AMPLITUDE; // hoch & runter
+        const yOff = Math.sin(k * Math.PI) * BOUNCE_AMPLITUDE;
         b.mesh.position.set(b.basePos.x, b.basePos.y + yOff, b.basePos.z);
         if (b.bounceT >= BOUNCE_DURATION) {
           b.bounceT = 0;
-          b.mesh.position.copy(b.basePos); // zurücksetzen
+          b.mesh.position.copy(b.basePos);
         }
       }
 
@@ -110,26 +156,27 @@ export class BlocksManager {
       block.aabb.setFromObject(block.mesh);
 
       for (const s of spheres) {
-        // Schnelle Prüfung: Distanzzentrum -> Block-AABB expandiert um Sphere-Radius
+        // Bounding-Box „aufblasen“
         const expanded = block.aabb.clone().expandByScalar(s.radius);
         if (!expanded.containsPoint(s.center)) continue;
 
-        // Ermitteln, ob Schlag NICHT von oben kommt
+        // Nicht von oben
         const center = expanded.getCenter(new THREE.Vector3());
         const toBlock = center.clone().sub(s.center).normalize();
         const up = new THREE.Vector3(0, 1, 0);
-        const fromAbove = toBlock.dot(up) < -0.4; // deutlich von oben
+        const fromAbove = toBlock.dot(up) < -0.4;
         if (fromAbove) continue;
 
         if (block.cooldown <= 0) {
-          // **Top-Center** der Welt-AABB (zentriert!) als Basis
+          // Top-Center (zentriert)
           const topCenter = new THREE.Vector3(center.x, block.aabb.max.y, center.z);
-          const spawnPos = topCenter.clone().add(up.clone().multiplyScalar(0.03)); // 3 cm über Oberkante
+          const spawnPos = topCenter.clone().add(up.clone().multiplyScalar(0.03)); // 3 cm darüber
+
           bursts.push({ spawnPos, upNormal: up.clone() });
 
-          // Trigger: Bounce + Cooldown
-          block.bounceT = 1e-6; // starte Bounce im nächsten updateIdle
-          block.cooldown = 30;  // ~0.5s bei 60fps
+          // Trigger Bounce + Cooldown
+          block.bounceT = 1e-6;
+          block.cooldown = 30; // ~0.5 s
         }
       }
     }

@@ -59,64 +59,41 @@ export class XRApp {
     return true;
   }
 
-  /**
-   * Einmaliges Warmup: Alle Shader/Programme kompilieren, bevor das Spiel „richtig“ loslegt.
-   * - Läuft nach Platzierung der Blöcke und nachdem die Münz-/Block-Modelle geladen sind.
-   * - Legt kurz ein unsichtbares Coin-Exemplar an, damit Material-/Skin-Varianten kompiliert werden.
-   */
   async _warmupPipelinesOnce() {
     if (this._didWarmup) return;
     try {
-      // Sicherstellen, dass Templates geladen sind
       await this.blocks.ensureLoaded();
-      await this.coins.ensureLoaded();
+      await this.coins.ensureLoaded?.();
 
-      // Temporäres, unsichtbares Coin-Exemplar hinzufügen, damit die Pipeline alle Pfade sieht
       const tempCoin = this.coins._makePreviewInstance?.();
-      if (tempCoin) {
-        tempCoin.visible = false;
-        this.sceneRig.scene.add(tempCoin);
-      }
+      if (tempCoin) { tempCoin.visible = false; this.sceneRig.scene.add(tempCoin); }
 
-      // WebXR-Kamera vom Renderer holen und compilieren
       const xrCam = this.renderer.xr.getCamera(this.sceneRig.camera);
       this.renderer.compile(this.sceneRig.scene, xrCam);
-
-      // Ein „Trocken-Render“ (ohne sichtbare Änderung) hilft einigen Runtimes zusätzlich
       this.renderer.render(this.sceneRig.scene, this.sceneRig.camera);
-
-      // Aufräumen
       if (tempCoin) tempCoin.removeFromParent();
 
       this._didWarmup = true;
-      // Optionales Feedback
-      // this.ui.toast('Pipelines vorgewärmt.');
     } catch (e) {
-      console.warn('Warmup fehlgeschlagen (wird übersprungen):', e);
+      console.warn('Warmup fehlgeschlagen:', e);
     }
   }
 
   cleanup() {
-    // Renderloop stoppen
     try { this.renderer?.setAnimationLoop(null); } catch {}
-    // Three-Objekte freigeben
+    try { this.blocks?.dispose?.(); } catch {}
     try { this.sceneRig?.dispose(); } catch {}
-
-    // WebGL-Context explizit freigeben (wichtig gegen „Context-Leaks“)
     try {
       if (this.renderer) {
         this.renderer.forceContextLoss?.();
         this.renderer.domElement?.remove();
       }
     } catch {}
-
-    // Referenzen löschen
     this.renderer = null;
     this.sceneRig = null;
     this.blocks = null;
     this.coins = null;
     this.world = new THREE.Group();
-
     this._placedBlocks = false;
     this._prevTime = null;
     this._didWarmup = false;
@@ -135,7 +112,6 @@ export class XRApp {
 
     this._lastFrame = frame;
 
-    // Beim ersten gültigen ViewerPose: Blöcke platzieren → dann Warmup
     if (!this._placedBlocks) {
       const vp = frame.getViewerPose(this.refSpace);
       if (vp) {
@@ -145,19 +121,23 @@ export class XRApp {
         const viewerQuat = new THREE.Quaternion(o.x, o.y, o.z, o.w);
 
         await this.blocks.ensureLoaded();
+
+        // Safety: vorherige (evtl. verirrte) Blöcke löschen
+        this.blocks.clear();
+
         this.blocks.placeAroundViewer(viewerPos, viewerQuat);
         this._placedBlocks = true;
 
-        // Direkt nach Platzierung + geladenen Assets: Pipelines vorwärmen
+        // Debug: verifizieren, dass es exakt 4 sind
+        console.log('[Blocks] placed:', this.blocks.blocks.length);
+
         await this._warmupPipelinesOnce();
       }
     }
 
-    // Eingabe-Sphären (Controller/Hand)
     const session = this.renderer.xr.getSession();
     const spheres = getInteractionSpheres(frame, this.refSpace, session.inputSources);
 
-    // Idle-Rotation + Bounce/Hit
     this.blocks.updateIdle(dtMs);
     const coinBursts = this.blocks.testHitsAndGetBursts(spheres);
     for (const b of coinBursts) {
@@ -165,10 +145,8 @@ export class XRApp {
       this.ui.setScore(this.coins.score);
     }
 
-    // Coins animieren (Flug/Rotation/Auflösen)
     this.coins.update(dtMs);
 
-    // FPS
     this._frameCount++;
     if (now - this._lastFpsSample > 500) {
       const fps = Math.round((this._frameCount * 1000) / (now - this._lastFpsSample));
