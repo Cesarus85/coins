@@ -41,9 +41,9 @@ export class XRApp {
 
   async startAR() {
     const sessionInit = {
-      requiredFeatures: ['local-floor'],
-      optionalFeatures: ['dom-overlay', 'hand-tracking'],
-      domOverlay: { root: document.body }
+    requiredFeatures: ['local-floor'],
+    optionalFeatures: ['dom-overlay', 'hand-tracking'],
+    domOverlay: { root: document.body }
     };
 
     // Renderer + SceneRig
@@ -69,6 +69,8 @@ export class XRApp {
     this.renderer.xr.enabled = true;
     this.renderer.xr.setReferenceSpaceType('local-floor');
     await this.renderer.xr.setSession(session);
+    this.ui.setHudVisible?.(true);   // zeigt auch die Equation an
+
 
     // Optionales Tuning (Foveation/Scale) – falls in SceneRig implementiert
     this.sceneRig.xrTweak?.(this.renderer);

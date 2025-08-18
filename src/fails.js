@@ -2,7 +2,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// Spawnt ein rotes "X" aus fail.glb, das hochsteigt & ausfadet.
 export class FailManager {
   constructor(scene) {
     this.scene = scene;
@@ -23,6 +22,7 @@ export class FailManager {
           if (o.isMesh && o.material) {
             if ('emissive' in o.material) o.material.emissive.set(0x990000);
             if ('emissiveIntensity' in o.material) o.material.emissiveIntensity = 0.8;
+            o.material.toneMapped = false;
           }
         });
         this.template = root;
@@ -35,7 +35,7 @@ export class FailManager {
 
   _makeInstance() {
     const mesh = this.template.clone(true);
-    mesh.scale.setScalar(0.25);
+    mesh.scale.setScalar(0.18); // kleiner
     mesh.visible = false;
     this.scene.add(mesh);
     return { mesh, t: 0 };
