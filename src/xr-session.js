@@ -28,24 +28,36 @@ export class XRApp {
   async startAR() {
     const sessionInit = {
       requiredFeatures: ['local-floor'],
-      optionalFeatures: ['dom-overlay', 'hand-tracking'],
+      optionalFeatures: ['dom-overlay', 'hand-tracking'], // Hand-Tracking bleibt aktiv
       domOverlay: { root: document.body }
     };
-    const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
 
+    // Renderer + Szene
     this.sceneRig = new SceneRig();
     this.renderer = this.sceneRig.renderer;
     this.sceneRig.scene.add(this.world);
 
-    this.refSpace = await session.requestReferenceSpace('local-floor');
-    this.viewerSpace = await session.requestReferenceSpace('viewer');
-
+    // Manager
     this.blocks = new BlocksManager(this.sceneRig.scene);
     this.coins = new CoinManager(this.sceneRig.scene);
 
+    // ⏳ Assets & Pools vorab laden/aufbauen
+    const preload = Promise.all([
+      this.blocks.ensureLoaded(),
+      this.coins.ensureLoaded() // baut auch den Pool
+    ]);
+
+    // XR-Session starten
+    const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
     this.renderer.xr.enabled = true;
     this.renderer.xr.setReferenceSpaceType('local-floor');
     await this.renderer.xr.setSession(session);
+
+    // XR-Downscale/Foveation (nach setSession)
+    this.sceneRig.xrTweak?.(this.renderer);
+
+    this.refSpace = await session.requestReferenceSpace('local-floor');
+    this.viewerSpace = await session.requestReferenceSpace('viewer');
 
     session.addEventListener('end', () => {
       this.ui.setHudVisible(false);
@@ -54,28 +66,27 @@ export class XRApp {
       this.cleanup();
     });
 
+    // Warten bis GLBs & Pool fertig sind, dann Pipelines vorwärmen
+    await preload;
+    await this._warmupPipelinesOnce();
+
+    // Render-Loop starten
     this.renderer.setAnimationLoop((t, frame) => this.onXRFrame(t, frame));
-    this.ui.toast('Vier Blöcke erscheinen um dich herum (1 m Abstand | +40 cm Höhe).');
+    this.ui.toast('Blöcke werden platziert …');
     return true;
   }
 
   async _warmupPipelinesOnce() {
     if (this._didWarmup) return;
     try {
-      await this.blocks.ensureLoaded();
-      await this.coins.ensureLoaded?.();
-
       const tempCoin = this.coins._makePreviewInstance?.();
       if (tempCoin) { tempCoin.visible = false; this.sceneRig.scene.add(tempCoin); }
-
       const xrCam = this.renderer.xr.getCamera(this.sceneRig.camera);
       this.renderer.compile(this.sceneRig.scene, xrCam);
-      this.renderer.render(this.sceneRig.scene, this.sceneRig.camera);
       if (tempCoin) tempCoin.removeFromParent();
-
       this._didWarmup = true;
     } catch (e) {
-      console.warn('Warmup fehlgeschlagen:', e);
+      console.warn('Warmup übersprungen:', e);
     }
   }
 
@@ -112,6 +123,7 @@ export class XRApp {
 
     this._lastFrame = frame;
 
+    // Platzierung erst bei gültiger ViewerPose (nach Preload/Warmup)
     if (!this._placedBlocks) {
       const vp = frame.getViewerPose(this.refSpace);
       if (vp) {
@@ -119,34 +131,29 @@ export class XRApp {
         const o = vp.transform.orientation;
         const viewerPos = new THREE.Vector3(p.x, p.y, p.z);
         const viewerQuat = new THREE.Quaternion(o.x, o.y, o.z, o.w);
-
-        await this.blocks.ensureLoaded();
-
-        // Safety: vorherige (evtl. verirrte) Blöcke löschen
         this.blocks.clear();
-
         this.blocks.placeAroundViewer(viewerPos, viewerQuat);
         this._placedBlocks = true;
-
-        // Debug: verifizieren, dass es exakt 4 sind
         console.log('[Blocks] placed:', this.blocks.blocks.length);
-
-        await this._warmupPipelinesOnce();
       }
     }
 
+    // Eingabe-Sphären (mit Hand-Tracking)
     const session = this.renderer.xr.getSession();
     const spheres = getInteractionSpheres(frame, this.refSpace, session.inputSources);
 
+    // Blöcke & Coins
     this.blocks.updateIdle(dtMs);
-    const coinBursts = this.blocks.testHitsAndGetBursts(spheres);
-    for (const b of coinBursts) {
-      this.coins.spawnBurst(b.spawnPos, b.upNormal);
+
+    const bursts = this.blocks.testHitsAndGetBursts(spheres);
+    if (bursts.length) {
+      for (const b of bursts) this.coins.spawnBurst(b.spawnPos, b.upNormal);
       this.ui.setScore(this.coins.score);
     }
 
     this.coins.update(dtMs);
 
+    // FPS
     this._frameCount++;
     if (now - this._lastFpsSample > 500) {
       const fps = Math.round((this._frameCount * 1000) / (now - this._lastFpsSample));
