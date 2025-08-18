@@ -1,11 +1,9 @@
-// ./src/xr-session.js
+// /src/xr-session.js
 import * as THREE from 'three';
 import { SceneRig } from './scene.js';
 import { BlocksManager } from './blocks.js';
 import { CoinManager } from './coins.js';
 import { getInteractionSpheres } from './input.js';
-
-// Mathe-Spiel & Fail-Effekt
 import { MathGame } from './math-game.js';
 import { FailManager } from './fails.js';
 
@@ -24,10 +22,10 @@ export class XRApp {
     this.math   = null;
     this.fails  = null;
 
-    // Root für Weltobjekte (vereinfachtes Aufräumen)
+    // Welt-Root (für sauberes Aufräumen)
     this.world = new THREE.Group();
 
-    // Timing / FPS
+    // Timing
     this._prevTime = null;
     this._lastFpsSample = performance.now();
     this._frameCount = 0;
@@ -38,10 +36,10 @@ export class XRApp {
   }
 
   async startAR() {
-    // AR-Session mit DOM Overlay
+    // DOM Overlay als required, damit das Equation-Banner sicher sichtbar ist
     const sessionInit = {
-      requiredFeatures: ['local-floor'],
-      optionalFeatures: ['dom-overlay', 'hand-tracking'],
+      requiredFeatures: ['local-floor', 'dom-overlay'],
+      optionalFeatures: ['hand-tracking'],
       domOverlay: { root: document.body }
     };
 
@@ -50,29 +48,29 @@ export class XRApp {
     this.renderer = this.sceneRig.renderer;
     this.sceneRig.scene.add(this.world);
 
-    // Manager instantiieren
+    // Manager
     this.blocks = new BlocksManager(this.sceneRig.scene);
     this.coins  = new CoinManager(this.sceneRig.scene);
     this.math   = new MathGame(this.ui, this.sceneRig.scene);
     this.fails  = new FailManager(this.sceneRig.scene);
 
-    // Assets/Pools vorladen
+    // Preloads
     const preload = Promise.all([
       this.blocks.ensureLoaded?.(),
       this.coins.ensureLoaded?.(),
       this.fails.preload?.()
     ]);
 
-    // XR-Session anfordern
+    // XR-Session
     const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
     this.renderer.xr.enabled = true;
     this.renderer.xr.setReferenceSpaceType('local-floor');
     await this.renderer.xr.setSession(session);
 
-    // HUD/Overlay sichtbar (zeigt auch Equation-Banner aus ui.js)
+    // HUD sichtbar → zeigt auch Equation-Banner
     this.ui?.setHudVisible?.(true);
 
-    // Optionale Render-Tweaks, falls in SceneRig vorhanden
+    // Optionale Renderoptimierung (falls in SceneRig vorhanden)
     this.sceneRig.xrTweak?.(this.renderer);
 
     // Referenzraum
@@ -84,14 +82,13 @@ export class XRApp {
       this.cleanup();
     });
 
-    // Preload & einmaliges Pipeline-Warmup
+    // Preload + Pipeline-Warmup
     await preload;
     await this._warmupPipelinesOnce();
 
-    // XR-Renderloop starten
+    // Renderloop starten
     this.renderer.setAnimationLoop((t, frame) => this.onXRFrame(t, frame));
 
-    // Kurze Statusmeldung
     this.ui?.toast?.('Blöcke werden platziert …');
     return true;
   }
@@ -108,12 +105,12 @@ export class XRApp {
   cleanup() {
     try { this.renderer?.setAnimationLoop(null); } catch {}
 
-    // Manager entsorgen
+    // Manager freigeben
     try { this.math?.dispose?.(); } catch {}
     try { this.fails?.dispose?.(); } catch {}
     try { this.blocks?.dispose?.(); } catch {}
 
-    // SceneRig entsorgen
+    // SceneRig freigeben
     try { this.sceneRig?.dispose?.(); } catch {}
 
     // Renderer freigeben
@@ -128,12 +125,10 @@ export class XRApp {
     this.renderer = null;
     this.sceneRig = null;
     this.refSpace = null;
-
     this.blocks = null;
-    this.coins  = null;
-    this.math   = null;
-    this.fails  = null;
-
+    this.coins = null;
+    this.math = null;
+    this.fails = null;
     this.world = new THREE.Group();
     this._placedBlocks = false;
     this._prevTime = null;
@@ -143,13 +138,10 @@ export class XRApp {
   async _warmupPipelinesOnce() {
     if (this._didWarmup) return;
     try {
-      // Falls CoinManager einen Vorschau-Mesh liefert: kurz anhängen -> compile() -> entfernen
       const preview = this.coins?._makePreviewInstance?.();
       if (preview) { preview.visible = false; this.sceneRig.scene.add(preview); }
-
       const xrCam = this.renderer.xr.getCamera(this.sceneRig.camera);
       this.renderer.compile(this.sceneRig.scene, xrCam);
-
       if (preview) preview.removeFromParent();
       this._didWarmup = true;
     } catch (e) {
@@ -163,7 +155,7 @@ export class XRApp {
     const dtMs = now - this._prevTime;
     this._prevTime = now;
 
-    // Einmalige Platzierung wenn Pose vorhanden
+    // Einmalige Platzierung, sobald Pose da ist
     if (!this._placedBlocks) {
       const pose = frame.getViewerPose(this.refSpace);
       if (pose) {
@@ -175,16 +167,18 @@ export class XRApp {
         this.blocks.placeAroundViewer?.(viewerPos, viewerQuat);
         this._placedBlocks = true;
 
-        // Zahlentafeln auf alle Würfel & erste Aufgabe
-        try { this.math?.attachBlocks?.(this.blocks.blocks); } catch (e) { console.warn('MathGame attach failed:', e); }
+        // Zahlen-Layer an die Blöcke + erste Aufgabe
+        try { this.math?.attachBlocks?.(this.blocks.blocks); } catch (e) {
+          console.warn('MathGame attach failed:', e);
+        }
       }
     }
 
-    // Eingabe-Sphären (Controller/Hands) holen
+    // Eingabe-Sphären (Controller/Handtracking)
     const session = this.renderer.xr.getSession();
     const spheres = getInteractionSpheres(frame, this.refSpace, session.inputSources);
 
-    // Blöcke idle animieren
+    // Idle-Animation der Blöcke
     this.blocks.updateIdle?.(dtMs);
 
     // Treffer prüfen
@@ -195,11 +189,11 @@ export class XRApp {
         const correct = !!this.math?.handleHit?.(hitIndex);
 
         if (correct) {
-          // Richtige Antwort -> Coins + Score
+          // Richtige Antwort → Coins + Score
           this.coins.spawnBurst?.(b.spawnPos, b.upNormal);
           this.ui?.setScore?.(this.coins.score);
         } else {
-          // Falsch -> rotes X
+          // Falsche Antwort → rotes X
           this.fails.spawn?.(b.spawnPos, b.upNormal);
         }
       }
@@ -209,7 +203,7 @@ export class XRApp {
     this.coins.update?.(dtMs);
     this.fails.update?.(dtMs);
 
-    // FPS
+    // FPS im HUD
     this._frameCount++;
     if (now - this._lastFpsSample > 500) {
       const fps = Math.round((this._frameCount * 1000) / (now - this._lastFpsSample));
@@ -222,7 +216,7 @@ export class XRApp {
     this.renderer.render(this.sceneRig.scene, this.sceneRig.camera);
   }
 
-  // Hilfsfunktion: index des Blocks, der dem Trefferpunkt am nächsten ist
+  // Hilfsfunktion: index des Blocks, der dem Trefferpunkt am nächsten liegt
   _nearestBlockIndex(pos) {
     const list = this.blocks?.blocks;
     if (!list?.length) return null;
