@@ -4,11 +4,19 @@ export class UI {
     this.scoreEl = document.getElementById('score');
     this.fpsEl = document.getElementById('fps');
     this._toastTimer = null;
+    this.eqEl = document.getElementById('equation');   // NEU
   }
 
-  setHudVisible(v) { if (this.hud) this.hud.hidden = !v; }
+  setHudVisible(v) {
+    if (this.hud) this.hud.hidden = !v;
+    const e = this.eqEl; if (e) e.hidden = !v;          // NEU
+  }
   setScore(v) { if (this.scoreEl) this.scoreEl.textContent = `Score: ${v}`; }
   setFps(fps) { if (this.fpsEl) this.fpsEl.textContent = `FPS: ${fps}`; }
+
+  setEquation(text) {                                    // NEU
+    if (this.eqEl) { this.eqEl.textContent = text; this.eqEl.hidden = false; }
+  }
 
   toast(msg, ms = 2500) {
     let el = document.getElementById('toast');
