@@ -1,183 +1,203 @@
-// /src/blocks.js
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-const BLOCK_SIZE_M       = 0.32;     // Ziel-Kantenlänge des Würfels (m)
-const VIEWER_FWD_DIST_M  = 1.15;     // Distanz vor dem Spieler
-const GRID_OFFS_M        = 0.42;     // seitlicher/longitudinaler Versatz für das 2x2-Grid
-const HEIGHT_OFFSET_M    = -0.15;    // leicht unter Augenhöhe platzieren
-const IDLE_ROT_SPEED_MIN = 0.4;      // rad/s
-const IDLE_ROT_SPEED_MAX = 0.9;      // rad/s
-const HIT_REARM_MS       = 420;      // Entprellzeit pro Block
-const HIT_GROW_EPS_M     = 0.02;     // AABB-Erweiterung für Kontakt
+const FORWARD_DIST = 1.0;
+const HEIGHT_OFFSET = 0.40;
+const BLOCK_TARGET_SIZE = 0.30;
+const IDLE_ROT_SPEED = 0.25;
+const BOUNCE_AMPLITUDE = 0.06;
+const BOUNCE_DURATION  = 0.35;
+
+// Anti-„Dauerfeuer“
+const REARM_NO_CONTACT_FRAMES = 8;
+const MIN_FIRE_INTERVAL_S      = 0.35;
+
+// Performance: AABB nicht jeden Frame neu (bei langsamer Idle-Rotation reicht 1/3)
+const AABB_REFRESH_RATE = 3; // alle 3 Frames
 
 export class BlocksManager {
   constructor(scene) {
     this.scene = scene;
-    /** @type {Array<{mesh:THREE.Object3D, aabb:THREE.Box3, nextArmTime:number, rotAxis:THREE.Vector3, rotSpeed:number}>} */
-    this.blocks = [];
-    this._tmpBox = new THREE.Box3();
-    this._tmpVec = new THREE.Vector3();
-    this._tmpMat = new THREE.Matrix4();
+    this.loader = new GLTFLoader();
+    this.template = null;
+    this.blocks = []; // {mesh,aabb,bounceT,basePos,armed,noContactFrames,lastFireAt}
+    this._placed = false;
+    this._frameCounter = 0;
+    // Reusable temporaries
+    this._tmpCenter = new THREE.Vector3();
+    this._tmpClosest = new THREE.Vector3();
+    this._up = new THREE.Vector3(0,1,0);
   }
 
   async ensureLoaded() {
-    // Prozedurale Würfel brauchen kein Asset-Preload.
-    return true;
+    if (this.template) return;
+    const gltf = await this._load('./assets/wuerfel.glb');
+    const root = gltf.scene || gltf.scenes?.[0];
+    if (!root) throw new Error('wuerfel.glb ohne Szene');
+
+    const bounds = new THREE.Box3().setFromObject(root);
+    const size = new THREE.Vector3(); bounds.getSize(size);
+    const srcEdge = Math.max(size.x, size.y, size.z) || 1;
+    const scale = BLOCK_TARGET_SIZE / srcEdge;
+    root.scale.setScalar(scale);
+
+    root.traverse(o => {
+      if (o.isMesh && o.material) {
+        if ('metalness' in o.material) o.material.metalness = Math.min(0.2, o.material.metalness ?? 0.2);
+        if ('roughness' in o.material) o.material.roughness = Math.max(0.7, o.material.roughness ?? 0.7);
+        if ('emissiveIntensity' in o.material) o.material.emissiveIntensity = Math.max(0.15, o.material.emissiveIntensity ?? 0.15);
+      }
+    });
+
+    this.template = root;
   }
 
   clear() {
-    for (const b of this.blocks) b.mesh.removeFromParent();
+    for (const b of this.blocks) b.mesh?.removeFromParent();
     this.blocks.length = 0;
+    this._placed = false;
   }
 
   dispose() {
     this.clear();
+    if (this.template) {
+      this.template.traverse(o => {
+        if (o.isMesh) {
+          o.geometry?.dispose?.();
+          const m = o.material;
+          if (m) Array.isArray(m) ? m.forEach(x => x.dispose?.()) : m.dispose?.();
+        }
+      });
+    }
+    this.template = null;
   }
 
-  /**
-   * Spawnt genau 4 Würfel in einem Quadrat um die Blickrichtung.
-   * @param {THREE.Vector3} viewerPos
-   * @param {THREE.Quaternion} viewerQuat
-   */
   placeAroundViewer(viewerPos, viewerQuat) {
-    this.clear();
+    if (this._placed) return;
+    this._placed = true;
 
-    // Basisachsen aus Blickrichtung
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(viewerQuat).setY(0).normalize();
-    const right   = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0,1,0)).normalize();
-    const center  = viewerPos.clone().addScaledVector(forward, VIEWER_FWD_DIST_M);
-    const y       = viewerPos.y + HEIGHT_OFFSET_M;
+    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(viewerQuat).normalize();
+    const right   = new THREE.Vector3(1,0,0).applyQuaternion(viewerQuat).normalize();
+    const up      = new THREE.Vector3(0,1,0);
 
-    // 2×2-Layout (vorne/hinten × links/rechts)
-    const offsets = [
-      { f:  1, r: -1 }, // vorne-links
-      { f:  1, r:  1 }, // vorne-rechts
-      { f: -1, r: -1 }, // hinten-links
-      { f: -1, r:  1 }, // hinten-rechts
+    const positions = [
+      viewerPos.clone().add(forward.clone().multiplyScalar(FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),
+      viewerPos.clone().add(forward.clone().multiplyScalar(-FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),
+      viewerPos.clone().add(right.clone().multiplyScalar(FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),
+      viewerPos.clone().add(right.clone().multiplyScalar(-FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),
     ];
 
-    for (let i = 0; i < 4; i++) {
-      const o = offsets[i];
-      const pos = center.clone()
-        .addScaledVector(forward, o.f * GRID_OFFS_M)
-        .addScaledVector(right,   o.r * GRID_OFFS_M);
-      pos.y = y;
-
-      const mesh = this.makeBlockMesh();
+    for (const pos of positions) {
+      const mesh = this.template.clone(true);
       mesh.position.copy(pos);
-
-      // leichte Zufallsdrehung und Idle-Parameter
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), new THREE.Vector3(0,1,0));
-      mesh.rotateY((Math.random() - 0.5) * Math.PI);
-      const rotAxis  = new THREE.Vector3(Math.random(), Math.random(), Math.random()).normalize();
-      const rotSpeed = THREE.MathUtils.lerp(IDLE_ROT_SPEED_MIN, IDLE_ROT_SPEED_MAX, Math.random());
-
+      const look = new THREE.Vector3(viewerPos.x, mesh.position.y, viewerPos.z);
+      mesh.lookAt(look);
+      mesh.frustumCulled = true;
       this.scene.add(mesh);
 
-      const aabb = new THREE.Box3().setFromObject(mesh).expandByScalar(HIT_GROW_EPS_M);
+      const aabb = new THREE.Box3().setFromObject(mesh);
       this.blocks.push({
-        mesh,
-        aabb,
-        nextArmTime: 0,
-        rotAxis,
-        rotSpeed,
+        mesh, aabb,
+        bounceT: 0,
+        basePos: mesh.position.clone(),
+        armed: true,
+        noContactFrames: 0,
+        lastFireAt: -Infinity
       });
     }
   }
 
-  /**
-   * Erzeugt einen einzelnen Würfel (BoxGeometry) – ersetze das bei Bedarf durch dein GLB.
-   */
-  makeBlockMesh() {
-    const g = new THREE.BoxGeometry(BLOCK_SIZE_M, BLOCK_SIZE_M, BLOCK_SIZE_M);
-    const m = new THREE.MeshStandardMaterial({
-      color: 0x333333,
-      metalness: 0.2,
-      roughness: 0.6
-    });
-    // rote Kante als dezent sichtbare Outline
-    const group = new THREE.Group();
-    const cube  = new THREE.Mesh(g, m);
-    cube.castShadow = cube.receiveShadow = false;
-    group.add(cube);
-
-    // optional: dünner Rahmen
-    const edgeGeo = new THREE.EdgesGeometry(g);
-    const edgeMat = new THREE.LineBasicMaterial({ color: 0xaa2222, linewidth: 1 });
-    const edges   = new THREE.LineSegments(edgeGeo, edgeMat);
-    group.add(edges);
-
-    return group;
-    // --- Wenn du ein GLB willst:
-    // const loader = new GLTFLoader(); // (oben importieren)
-    // ...load + scale auf BLOCK_SIZE_M
-  }
-
-  /**
-   * Sanfte Idle-Animation (Rotation).
-   * @param {number} dtMs
-   */
   updateIdle(dtMs) {
-    const dt = dtMs / 1000;
+    const dt = (dtMs ?? 16.666) / 1000;
+    this._frameCounter++;
+
+    // Notbremse
+    if (this.blocks.length > 4) {
+      for (let i = 4; i < this.blocks.length; i++) this.blocks[i].mesh?.removeFromParent();
+      this.blocks.length = 4;
+    }
+
+    // Rotation + Bounce
     for (const b of this.blocks) {
-      b.mesh.rotateOnAxis(b.rotAxis, b.rotSpeed * dt);
-      // AABB neu berechnen (sparsam – hier jedes Frame ok bei 4 Blöcken)
-      b.aabb.setFromObject(b.mesh).expandByScalar(HIT_GROW_EPS_M);
+      b.mesh.rotateY(IDLE_ROT_SPEED * dt);
+      if (b.bounceT > 0) {
+        b.bounceT = Math.min(BOUNCE_DURATION, b.bounceT + dt);
+        const k = b.bounceT / BOUNCE_DURATION;
+        const yOff = Math.sin(k * Math.PI) * BOUNCE_AMPLITUDE;
+        b.mesh.position.set(b.basePos.x, b.basePos.y + yOff, b.basePos.z);
+        if (b.bounceT >= BOUNCE_DURATION) {
+          b.bounceT = 0;
+          b.mesh.position.copy(b.basePos);
+        }
+      }
+      // AABB nur alle N Frames refreshen
+      if (this._frameCounter % AABB_REFRESH_RATE === 0) {
+        b.aabb.setFromObject(b.mesh);
+      }
     }
   }
 
-  /**
-   * Prüft Sphärenkontakte gegen Block-AABBs und gibt Bursts zurück.
-   * @param {Array<{center:THREE.Vector3, radius:number}>} spheres
-   * @returns {Array<{spawnPos:THREE.Vector3, upNormal:THREE.Vector3, blockIndex:number}>}
-   */
   testHitsAndGetBursts(spheres) {
-    const now = performance.now();
     const bursts = [];
+    const up = this._up;
+    const now = performance.now() / 1000;
 
-    for (let i = 0; i < this.blocks.length; i++) {
-      const b = this.blocks[i];
-      if (now < b.nextArmTime) continue; // noch im Cooldown
+    for (const block of this.blocks) {
+      // bei seltenerem Refresh evtl. initial sicherstellen:
+      block.aabb.setFromObject(block.mesh);
 
-      // Sphären/AABB Test
-      let hit = false;
+      let anyContact = false; let fired = false;
+
+      const center = block.aabb.getCenter(this._tmpCenter);
+
       for (const s of spheres) {
-        if (s.radius <= 0) continue;
-        if (this._intersectsSphereAABB(s.center, s.radius, b.aabb)) { hit = true; break; }
+        // Sphere vs AABB
+        const c = this._tmpClosest;
+        c.set(
+          THREE.MathUtils.clamp(s.center.x, block.aabb.min.x, block.aabb.max.x),
+          THREE.MathUtils.clamp(s.center.y, block.aabb.min.y, block.aabb.max.y),
+          THREE.MathUtils.clamp(s.center.z, block.aabb.min.z, block.aabb.max.z),
+        );
+        const dx = s.center.x - c.x, dy = s.center.y - c.y, dz = s.center.z - c.z;
+        const distSq = dx*dx + dy*dy + dz*dz;
+        const r = s.radius * 1.02;
+        if (distSq > r*r) continue;
+
+        anyContact = true;
+
+        // nicht von oben
+        const toBlock = center.clone().sub(s.center).normalize();
+        const fromAbove = toBlock.dot(up) < -0.4;
+        if (fromAbove) continue;
+
+        if (!fired && block.armed && (now - block.lastFireAt) >= MIN_FIRE_INTERVAL_S) {
+          const topCenter = new THREE.Vector3(center.x, block.aabb.max.y, center.z);
+          const spawnPos = topCenter.addScaledVector(up, 0.03);
+          bursts.push({ spawnPos, upNormal: up.clone() });
+
+          block.bounceT = 1e-6;
+          block.armed = false;
+          block.lastFireAt = now;
+          fired = true;
+        }
       }
-      if (!hit) continue;
 
-      // Entprellen
-      b.nextArmTime = now + HIT_REARM_MS;
-
-      // Burst-Position = obere Mitte der Block-AABB
-      const spawnPos = new THREE.Vector3(
-        (b.aabb.min.x + b.aabb.max.x) * 0.5,
-        b.aabb.max.y + 0.02,
-        (b.aabb.min.z + b.aabb.max.z) * 0.5
-      );
-      const upNormal = new THREE.Vector3(0, 1, 0);
-
-      bursts.push({ spawnPos, upNormal, blockIndex: i });
+      if (!anyContact) {
+        block.noContactFrames++;
+        if (block.noContactFrames >= REARM_NO_CONTACT_FRAMES) {
+          block.armed = true;
+          block.noContactFrames = 0;
+        }
+      } else {
+        block.noContactFrames = 0;
+      }
     }
-
     return bursts;
   }
 
-  // ---------- intern ----------
-
-  /**
-   * Schneller Sphere/AABB-Test.
-   * @param {THREE.Vector3} c
-   * @param {number} r
-   * @param {THREE.Box3} box
-   */
-  _intersectsSphereAABB(c, r, box) {
-    // clamp center to box, dann Distanz vergleichen
-    const x = Math.max(box.min.x, Math.min(c.x, box.max.x));
-    const y = Math.max(box.min.y, Math.min(c.y, box.max.y));
-    const z = Math.max(box.min.z, Math.min(c.z, box.max.z));
-    const dx = x - c.x, dy = y - c.y, dz = z - c.z;
-    return (dx*dx + dy*dy + dz*dz) <= (r * r);
+  _load(url) {
+    return new Promise((resolve, reject) => {
+      this.loader.load(url, resolve, undefined, reject);
+    });
   }
 }

@@ -44,7 +44,7 @@ export class FailManager {
 
   _makeInstance() {
     const mesh = this.template.clone(true);
-    mesh.scale.setScalar(0.09); // kleiner
+    mesh.scale.setScalar(0.15); // kleiner
     mesh.visible = false;
     this.scene.add(mesh);
     return { mesh, t: 0 };
