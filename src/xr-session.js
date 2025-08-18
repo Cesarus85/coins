@@ -1,11 +1,11 @@
-// ./xr-session.js
+// ./src/xr-session.js
 import * as THREE from 'three';
 import { SceneRig } from './scene.js';
 import { BlocksManager } from './blocks.js';
 import { CoinManager } from './coins.js';
 import { getInteractionSpheres } from './input.js';
 
-// NEU: Mathe-Spiel & Fail-Effekt
+// Mathe-Spiel & Fail-Effekt
 import { MathGame } from './math-game.js';
 import { FailManager } from './fails.js';
 
@@ -13,99 +13,99 @@ export class XRApp {
   constructor(ui) {
     this.ui = ui;
 
-    // Renderer & Szene
+    // XR/Render
     this.renderer = null;
     this.sceneRig = null;
     this.refSpace = null;
-    this.viewerSpace = null;
 
     // Manager
     this.blocks = null;
-    this.coins = null;
-    this.math = null;     // NEU
-    this.fails = null;    // NEU
+    this.coins  = null;
+    this.math   = null;
+    this.fails  = null;
 
-    // Eigenes Wurzelobjekt (gut zum Aufräumen)
+    // Root für Weltobjekte (vereinfachtes Aufräumen)
     this.world = new THREE.Group();
 
-    // Takt / FPS
+    // Timing / FPS
+    this._prevTime = null;
     this._lastFpsSample = performance.now();
     this._frameCount = 0;
-    this._lastFrame = null;
 
-    // Ablauf-Flags
+    // State
     this._placedBlocks = false;
-    this._prevTime = null;
     this._didWarmup = false;
   }
 
   async startAR() {
+    // AR-Session mit DOM Overlay
     const sessionInit = {
-    requiredFeatures: ['local-floor'],
-    optionalFeatures: ['dom-overlay', 'hand-tracking'],
-    domOverlay: { root: document.body }
+      requiredFeatures: ['local-floor'],
+      optionalFeatures: ['dom-overlay', 'hand-tracking'],
+      domOverlay: { root: document.body }
     };
 
-    // Renderer + SceneRig
+    // Szene & Renderer
     this.sceneRig = new SceneRig();
     this.renderer = this.sceneRig.renderer;
     this.sceneRig.scene.add(this.world);
 
-    // Manager anlegen
+    // Manager instantiieren
     this.blocks = new BlocksManager(this.sceneRig.scene);
     this.coins  = new CoinManager(this.sceneRig.scene);
     this.math   = new MathGame(this.ui, this.sceneRig.scene);
     this.fails  = new FailManager(this.sceneRig.scene);
 
-    // Assets / Pools vorladen
+    // Assets/Pools vorladen
     const preload = Promise.all([
-      this.blocks.ensureLoaded(),
-      this.coins.ensureLoaded(),
-      this.fails.preload()
+      this.blocks.ensureLoaded?.(),
+      this.coins.ensureLoaded?.(),
+      this.fails.preload?.()
     ]);
 
-    // XR-Session
+    // XR-Session anfordern
     const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
     this.renderer.xr.enabled = true;
     this.renderer.xr.setReferenceSpaceType('local-floor');
     await this.renderer.xr.setSession(session);
-    this.ui.setHudVisible?.(true);   // zeigt auch die Equation an
 
+    // HUD/Overlay sichtbar (zeigt auch Equation-Banner aus ui.js)
+    this.ui?.setHudVisible?.(true);
 
-    // Optionales Tuning (Foveation/Scale) – falls in SceneRig implementiert
+    // Optionale Render-Tweaks, falls in SceneRig vorhanden
     this.sceneRig.xrTweak?.(this.renderer);
 
-    // Referenzräume
-    this.refSpace   = await session.requestReferenceSpace('local-floor');
-    this.viewerSpace = await session.requestReferenceSpace('viewer');
+    // Referenzraum
+    this.refSpace = await session.requestReferenceSpace('local-floor');
 
-    // Session-Ende sauber behandeln
+    // Session-Ende
     session.addEventListener('end', () => {
-      try { this.ui.setHudVisible?.(false); } catch {}
+      try { this.ui?.setHudVisible?.(false); } catch {}
       this.cleanup();
     });
 
-    // Auf Preload warten und Pipelines „anschwitzen“ (Shader compile etc.)
+    // Preload & einmaliges Pipeline-Warmup
     await preload;
     await this._warmupPipelinesOnce();
 
-    // Render-Loop
+    // XR-Renderloop starten
     this.renderer.setAnimationLoop((t, frame) => this.onXRFrame(t, frame));
-    this.ui.toast?.('Blöcke werden platziert …');
+
+    // Kurze Statusmeldung
+    this.ui?.toast?.('Blöcke werden platziert …');
     return true;
   }
 
   end() {
-    const session = this.renderer?.xr?.getSession();
+    const session = this.renderer?.xr?.getSession?.();
     if (session) {
-      try { session.end(); } catch (e) { console.warn('Session end error', e); }
+      try { session.end(); } catch (e) { console.warn('XR session end error:', e); }
     } else {
       this.cleanup();
     }
   }
 
   cleanup() {
-    // Animations-Loop stoppen
     try { this.renderer?.setAnimationLoop(null); } catch {}
 
     // Manager entsorgen
@@ -120,17 +120,19 @@ export class XRApp {
     try {
       if (this.renderer) {
         this.renderer.forceContextLoss?.();
-        this.renderer.domElement?.remove();
+        this.renderer.domElement?.remove?.();
       }
     } catch {}
 
     // Felder zurücksetzen
     this.renderer = null;
     this.sceneRig = null;
+    this.refSpace = null;
+
     this.blocks = null;
-    this.coins = null;
-    this.math = null;
-    this.fails = null;
+    this.coins  = null;
+    this.math   = null;
+    this.fails  = null;
 
     this.world = new THREE.Group();
     this._placedBlocks = false;
@@ -141,91 +143,86 @@ export class XRApp {
   async _warmupPipelinesOnce() {
     if (this._didWarmup) return;
     try {
-      // Coins einmal „durch die Pipeline drücken“
-      const tempCoin = this.coins._makePreviewInstance?.();
-      if (tempCoin) { tempCoin.visible = false; this.sceneRig.scene.add(tempCoin); }
+      // Falls CoinManager einen Vorschau-Mesh liefert: kurz anhängen -> compile() -> entfernen
+      const preview = this.coins?._makePreviewInstance?.();
+      if (preview) { preview.visible = false; this.sceneRig.scene.add(preview); }
 
-      // Compile im XR-Kontext
       const xrCam = this.renderer.xr.getCamera(this.sceneRig.camera);
       this.renderer.compile(this.sceneRig.scene, xrCam);
 
-      if (tempCoin) tempCoin.removeFromParent();
+      if (preview) preview.removeFromParent();
       this._didWarmup = true;
     } catch (e) {
-      console.warn('Warmup übersprungen:', e);
+      console.warn('Warmup skipped:', e);
     }
   }
 
-  onXRFrame(t, frame) {
+  onXRFrame(_t, frame) {
     const now = performance.now();
     if (this._prevTime == null) this._prevTime = now;
     const dtMs = now - this._prevTime;
     this._prevTime = now;
 
-    this._lastFrame = frame;
-
-    // Einmalige Platzierung der Blöcke, wenn ViewerPose vorliegt
+    // Einmalige Platzierung wenn Pose vorhanden
     if (!this._placedBlocks) {
-      const vp = frame.getViewerPose(this.refSpace);
-      if (vp) {
-        const p = vp.transform.position;
-        const o = vp.transform.orientation;
-        const viewerPos = new THREE.Vector3(p.x, p.y, p.z);
-        const viewerQuat = new THREE.Quaternion(o.x, o.y, o.z, o.w);
+      const pose = frame.getViewerPose(this.refSpace);
+      if (pose) {
+        const t = pose.transform;
+        const viewerPos  = new THREE.Vector3(t.position.x, t.position.y, t.position.z);
+        const viewerQuat = new THREE.Quaternion(t.orientation.x, t.orientation.y, t.orientation.z, t.orientation.w);
 
-        this.blocks.clear();
-        this.blocks.placeAroundViewer(viewerPos, viewerQuat);
+        this.blocks.clear?.();
+        this.blocks.placeAroundViewer?.(viewerPos, viewerQuat);
         this._placedBlocks = true;
 
-        // NEU: Zahlen-Labels auf alle Würfel & erste Aufgabe
-        try { this.math?.attachBlocks(this.blocks.blocks); } catch (e) { console.warn('Math attach failed', e); }
-
-        console.log('[Blocks] placed:', this.blocks.blocks?.length ?? 0);
+        // Zahlentafeln auf alle Würfel & erste Aufgabe
+        try { this.math?.attachBlocks?.(this.blocks.blocks); } catch (e) { console.warn('MathGame attach failed:', e); }
       }
     }
 
-    // Eingabe-Sphären (Controller + Handtracking)
+    // Eingabe-Sphären (Controller/Hands) holen
     const session = this.renderer.xr.getSession();
     const spheres = getInteractionSpheres(frame, this.refSpace, session.inputSources);
 
-    // Idle-Animation der Blöcke
-    this.blocks.updateIdle(dtMs);
+    // Blöcke idle animieren
+    this.blocks.updateIdle?.(dtMs);
 
     // Treffer prüfen
-    const bursts = this.blocks.testHitsAndGetBursts(spheres);
+    const bursts = this.blocks.testHitsAndGetBursts?.(spheres) || [];
     if (bursts.length) {
       for (const b of bursts) {
         const hitIndex = this._nearestBlockIndex(b.spawnPos);
         const correct = !!this.math?.handleHit?.(hitIndex);
 
         if (correct) {
-          // Richtiger Würfel → Coins + Score
-          this.coins.spawnBurst(b.spawnPos, b.upNormal);
-          this.ui.setScore?.(this.coins.score);
+          // Richtige Antwort -> Coins + Score
+          this.coins.spawnBurst?.(b.spawnPos, b.upNormal);
+          this.ui?.setScore?.(this.coins.score);
         } else {
-          // Falscher Würfel → Rotes X
-          this.fails.spawn(b.spawnPos, b.upNormal);
+          // Falsch -> rotes X
+          this.fails.spawn?.(b.spawnPos, b.upNormal);
         }
       }
     }
 
     // Effekte updaten
-    this.coins.update(dtMs);
-    this.fails.update(dtMs);
+    this.coins.update?.(dtMs);
+    this.fails.update?.(dtMs);
 
-    // FPS im HUD
+    // FPS
     this._frameCount++;
     if (now - this._lastFpsSample > 500) {
       const fps = Math.round((this._frameCount * 1000) / (now - this._lastFpsSample));
-      this._frameCount = 0; this._lastFpsSample = now;
-      this.ui.setFps?.(fps);
+      this._frameCount = 0;
+      this._lastFpsSample = now;
+      this.ui?.setFps?.(fps);
     }
 
     // Rendern
     this.renderer.render(this.sceneRig.scene, this.sceneRig.camera);
   }
 
-  // Ermittelt den index des am nächsten gelegenen Blocks zu einer Position (Trefferpunkt)
+  // Hilfsfunktion: index des Blocks, der dem Trefferpunkt am nächsten ist
   _nearestBlockIndex(pos) {
     const list = this.blocks?.blocks;
     if (!list?.length) return null;
