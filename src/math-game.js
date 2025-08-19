@@ -242,4 +242,3 @@ export class MathGame {
     return tex;
   }
 }
-```
