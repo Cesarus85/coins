@@ -113,13 +113,14 @@ export class MathGame {
     const makeMat = () => {
       const mat = new THREE.MeshBasicMaterial({
         transparent: true,
-        side: THREE.FrontSide, // Nur von vorne sichtbar
+        side: THREE.DoubleSide, // Von beiden Seiten sichtbar
         toneMapped: false,
-        depthTest: true, // Depth-Test wieder aktivieren
-        depthWrite: true, // Depth-Write aktivieren
+        depthTest: false, // Depth-Test deaktivieren für bessere Sichtbarkeit
+        depthWrite: false, // Depth-Write deaktivieren
         polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1
+        polygonOffsetFactor: -10,
+        polygonOffsetUnits: -10,
+        opacity: 1.0 // Vollständig sichtbar
       });
       return mat;
     };
@@ -127,9 +128,10 @@ export class MathGame {
     const planes = [];
     for (let i=0;i<6;i++) {
       const m = new THREE.Mesh(geom, makeMat());
-      m.renderOrder = 100; // moderate Priorität über der Blockoberfläche
+      m.renderOrder = 1000; // hohe Priorität über der Blockoberfläche
       m.name = `label_face_${i}`;
       m.frustumCulled = false; // immer rendern
+      m.visible = true; // explizit sichtbar setzen
       planes.push(m); g.add(m);
     }
     return g;
@@ -145,9 +147,9 @@ export class MathGame {
     const L = Math.max(size.x, size.y, size.z);
     const half = L * 0.5;
 
-    // Sichtfläche ~ 70% der Seite, größerer Abstand zur Oberfläche
-    const faceSize = L * 0.7;
-    const eps = L * 0.15; // Noch größerer Abstand zur Oberfläche
+    // Sichtfläche ~ 60% der Seite, moderater Abstand zur Oberfläche
+    const faceSize = L * 0.6;
+    const eps = L * 0.05; // Kleinerer Abstand zur Oberfläche - direkt auf der Oberfläche
 
     // Alle 6 Planes passend anordnen
     const planes = block.labelGroup.children;
@@ -184,12 +186,24 @@ export class MathGame {
   }
 
   _setBlockNumber(block, value) {
-    if (!block?.labelGroup) return;
+    if (!block?.labelGroup) {
+      console.warn('Block has no labelGroup:', block);
+      return;
+    }
     const text = String(value);
     const tex = this._getOrMakeNumberTexture(text);
+    console.log(`Setting number ${text} on block, texture:`, tex);
+    
+    let meshCount = 0;
     block.labelGroup.traverse(o => {
-      if (o.isMesh && o.material) { o.material.map = tex; o.material.needsUpdate = true; }
+      if (o.isMesh && o.material) { 
+        o.material.map = tex; 
+        o.material.needsUpdate = true;
+        o.visible = true; // explizit sichtbar setzen
+        meshCount++;
+      }
     });
+    console.log(`Updated ${meshCount} meshes for number ${text}`);
   }
 
   _getOrMakeNumberTexture(text) {
