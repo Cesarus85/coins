@@ -8,6 +8,7 @@ import { getInteractionSpheres } from './input.js';
 // NEU: Mathe-Spiel & Fail-Effekt
 import { MathGame } from './math-game.js';
 import { FailManager } from './fails.js';
+import { GrooveCharacterManager } from './groove-character.js';
 
 export class XRApp {
   constructor(ui) {
@@ -24,6 +25,7 @@ export class XRApp {
     this.coins = null;
     this.math = null;     // NEU
     this.fails = null;    // NEU
+    this.grooveCharacter = null;
 
     // Eigenes Wurzelobjekt (gut zum Aufräumen)
     this.world = new THREE.Group();
@@ -56,12 +58,14 @@ export class XRApp {
     this.coins  = new CoinManager(this.sceneRig.scene);
     this.fails  = new FailManager(this.sceneRig.scene);
     this.math   = new MathGame(this.ui, this.sceneRig.scene, this.fails);
+    this.grooveCharacter = new GrooveCharacterManager(this.sceneRig.scene);
 
     // Assets / Pools vorladen
     const preload = Promise.all([
       this.blocks.ensureLoaded(),
       this.coins.ensureLoaded(),
-      this.fails.preload()
+      this.fails.preload(),
+      this.grooveCharacter.ensureLoaded()
     ]);
 
     // XR-Session
@@ -112,6 +116,7 @@ export class XRApp {
     try { this.math?.dispose?.(); } catch {}
     try { this.fails?.dispose?.(); } catch {}
     try { this.blocks?.dispose?.(); } catch {}
+    try { this.grooveCharacter?.dispose?.(); } catch {}
 
     // SceneRig entsorgen
     try { this.sceneRig?.dispose?.(); } catch {}
@@ -131,6 +136,7 @@ export class XRApp {
     this.coins = null;
     this.math = null;
     this.fails = null;
+    this.grooveCharacter = null;
 
     this.world = new THREE.Group();
     this._placedBlocks = false;
@@ -180,6 +186,9 @@ export class XRApp {
         // NEU: Zahlen-Labels auf alle Würfel & erste Aufgabe
         try { this.math?.attachBlocks(this.blocks.blocks, viewerPos, viewerQuat); } catch (e) { console.warn('Math attach failed', e); }
 
+        // Groove-Charakter platzieren
+        try { this.grooveCharacter?.placeCharacter(viewerPos, viewerQuat); } catch (e) { console.warn('Groove character placement failed', e); }
+
         console.log('[Blocks] placed:', this.blocks.blocks?.length ?? 0);
       }
     }
@@ -220,6 +229,7 @@ export class XRApp {
     // Effekte updaten
     this.coins.update(dtMs);
     this.fails.update(dtMs);
+    this.grooveCharacter.update(dtMs);
 
     // FPS im HUD
     this._frameCount++;
