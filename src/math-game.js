@@ -113,13 +113,13 @@ export class MathGame {
     const makeMat = () => {
       const mat = new THREE.MeshBasicMaterial({
         transparent: true,
-        side: THREE.DoubleSide,
+        side: THREE.FrontSide, // Nur von vorne sichtbar
         toneMapped: false,
-        depthTest: false,
-        depthWrite: false,
+        depthTest: true, // Depth-Test wieder aktivieren
+        depthWrite: true, // Depth-Write aktivieren
         polygonOffset: true,
-        polygonOffsetFactor: -10,
-        polygonOffsetUnits: -10
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1
       });
       return mat;
     };
@@ -127,7 +127,7 @@ export class MathGame {
     const planes = [];
     for (let i=0;i<6;i++) {
       const m = new THREE.Mesh(geom, makeMat());
-      m.renderOrder = 1000; // sehr hohe Priorität über der Blockoberfläche
+      m.renderOrder = 100; // moderate Priorität über der Blockoberfläche
       m.name = `label_face_${i}`;
       m.frustumCulled = false; // immer rendern
       planes.push(m); g.add(m);
@@ -145,23 +145,42 @@ export class MathGame {
     const L = Math.max(size.x, size.y, size.z);
     const half = L * 0.5;
 
-    // Sichtfläche ~ 80% der Seite, aber größerer Abstand zur Oberfläche
-    const faceSize = L * 0.8;
-    const eps = L * 0.1; // Größerer Abstand zur Oberfläche
+    // Sichtfläche ~ 70% der Seite, größerer Abstand zur Oberfläche
+    const faceSize = L * 0.7;
+    const eps = L * 0.15; // Noch größerer Abstand zur Oberfläche
 
     // Alle 6 Planes passend anordnen
     const planes = block.labelGroup.children;
-    for (const p of planes) { p.scale.set(faceSize, faceSize, 1); }
+    for (const p of planes) { 
+      p.scale.set(faceSize, faceSize, 1);
+      // Reset rotation first
+      p.rotation.set(0, 0, 0);
+    }
 
-    // +X / -X
-    planes[0].position.set( half + eps, 0, 0); planes[0].rotation.set(0, -Math.PI/2, 0);
-    planes[1].position.set(-half - eps, 0, 0); planes[1].rotation.set(0,  Math.PI/2, 0);
-    // +Y / -Y
-    planes[2].position.set(0,  half + eps, 0); planes[2].rotation.set( Math.PI/2, 0, 0);
-    planes[3].position.set(0, -half - eps, 0); planes[3].rotation.set(-Math.PI/2, 0, 0);
-    // +Z / -Z
-    planes[4].position.set(0, 0,  half + eps); planes[4].rotation.set(0, 0, 0);
-    planes[5].position.set(0, 0, -half - eps); planes[5].rotation.set(0,  Math.PI, 0);
+    // Korrekte Rotationen für Würfelflächen (ohne 45-Grad-Versatz)
+    // +X (rechte Seite)
+    planes[0].position.set(half + eps, 0, 0);
+    planes[0].rotation.set(0, Math.PI/2, 0);
+    
+    // -X (linke Seite)  
+    planes[1].position.set(-half - eps, 0, 0);
+    planes[1].rotation.set(0, -Math.PI/2, 0);
+    
+    // +Y (obere Seite)
+    planes[2].position.set(0, half + eps, 0);
+    planes[2].rotation.set(-Math.PI/2, 0, 0);
+    
+    // -Y (untere Seite)
+    planes[3].position.set(0, -half - eps, 0);
+    planes[3].rotation.set(Math.PI/2, 0, 0);
+    
+    // +Z (vordere Seite)
+    planes[4].position.set(0, 0, half + eps);
+    planes[4].rotation.set(0, 0, 0);
+    
+    // -Z (hintere Seite)
+    planes[5].position.set(0, 0, -half - eps);
+    planes[5].rotation.set(0, Math.PI, 0);
   }
 
   _setBlockNumber(block, value) {
