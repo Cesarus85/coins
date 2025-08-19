@@ -1,5 +1,6 @@
 // ./math-game.js
 import * as THREE from 'three';
+import { EquationDisplay } from './equation-display.js';
 
 export class MathGame {
   constructor(ui, scene, failManager = null) {
@@ -10,9 +11,10 @@ export class MathGame {
     this.correctIndex = 0;
     this.current = { a: 1, b: 1, sum: 2 };
     this.texCache = new Map();
+    this.equationDisplay = new EquationDisplay(scene);
   }
 
-  attachBlocks(blocks) {
+  attachBlocks(blocks, viewerPos = null, viewerQuat = null) {
     this.blocks = blocks || [];
     // Label-Gruppen anlegen/skalieren
     this.blocks.forEach((b) => {
@@ -23,6 +25,12 @@ export class MathGame {
       }
       this._resizeLabelGroupToBlock(b);
     });
+
+    // 3D Gleichungsanzeige erstellen falls Viewer-Position verfügbar
+    if (viewerPos && viewerQuat) {
+      this.equationDisplay.createDisplay(viewerPos, viewerQuat);
+    }
+
     this._newProblem(true);
   }
 
@@ -40,6 +48,10 @@ export class MathGame {
     return isCorrect;
   }
 
+  updateEquationPosition(viewerPos, viewerQuat) {
+    this.equationDisplay.updatePosition(viewerPos, viewerQuat);
+  }
+
   dispose() {
     for (const b of this.blocks) {
       if (b?.labelGroup) {
@@ -52,6 +64,7 @@ export class MathGame {
         b.labelGroup = undefined;
       }
     }
+    this.equationDisplay.dispose();
     this.texCache.forEach(tex => tex.dispose?.());
     this.texCache.clear();
   }
@@ -65,7 +78,9 @@ export class MathGame {
     const b = 1 + Math.floor(Math.random() * Math.max(1, bMax));
     const sum = a + b;
     this.current = { a, b, sum };
-    this.ui?.setEquation?.(`${a} + ${b} = ?`);
+    const equationText = `${a} + ${b} = ?`;
+    this.ui?.setEquation?.(equationText);
+    this.equationDisplay.updateEquation(equationText);
 
     // Zufälliger Index für korrekte Antwort
     this.correctIndex = Math.floor(Math.random() * Math.min(4, this.blocks.length));
@@ -100,10 +115,11 @@ export class MathGame {
         transparent: true,
         side: THREE.DoubleSide,
         toneMapped: false,
-        depthTest: true,
+        depthTest: false,
         depthWrite: false,
         polygonOffset: true,
-        polygonOffsetFactor: -2
+        polygonOffsetFactor: -10,
+        polygonOffsetUnits: -10
       });
       return mat;
     };
@@ -111,8 +127,9 @@ export class MathGame {
     const planes = [];
     for (let i=0;i<6;i++) {
       const m = new THREE.Mesh(geom, makeMat());
-      m.renderOrder = 100; // über der Blockoberfläche
+      m.renderOrder = 1000; // sehr hohe Priorität über der Blockoberfläche
       m.name = `label_face_${i}`;
+      m.frustumCulled = false; // immer rendern
       planes.push(m); g.add(m);
     }
     return g;
@@ -128,9 +145,9 @@ export class MathGame {
     const L = Math.max(size.x, size.y, size.z);
     const half = L * 0.5;
 
-    // Sichtfläche ~ 70% der Seite
-    const faceSize = L * 0.7;
-    const eps = L * 0.02; // Abstand zur Oberfläche
+    // Sichtfläche ~ 80% der Seite, aber größerer Abstand zur Oberfläche
+    const faceSize = L * 0.8;
+    const eps = L * 0.1; // Größerer Abstand zur Oberfläche
 
     // Alle 6 Planes passend anordnen
     const planes = block.labelGroup.children;

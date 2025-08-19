@@ -178,7 +178,7 @@ export class XRApp {
         this._placedBlocks = true;
 
         // NEU: Zahlen-Labels auf alle Würfel & erste Aufgabe
-        try { this.math?.attachBlocks(this.blocks.blocks); } catch (e) { console.warn('Math attach failed', e); }
+        try { this.math?.attachBlocks(this.blocks.blocks, viewerPos, viewerQuat); } catch (e) { console.warn('Math attach failed', e); }
 
         console.log('[Blocks] placed:', this.blocks.blocks?.length ?? 0);
       }
@@ -187,6 +187,16 @@ export class XRApp {
     // Eingabe-Sphären (Controller + Handtracking)
     const session = this.renderer.xr.getSession();
     const spheres = getInteractionSpheres(frame, this.refSpace, session.inputSources);
+
+    // Gleichungsposition aktualisieren basierend auf Viewer-Position
+    const vp = frame.getViewerPose(this.refSpace);
+    if (vp && this.math) {
+      const p = vp.transform.position;
+      const o = vp.transform.orientation;
+      const viewerPos = new THREE.Vector3(p.x, p.y, p.z);
+      const viewerQuat = new THREE.Quaternion(o.x, o.y, o.z, o.w);
+      this.math.updateEquationPosition(viewerPos, viewerQuat);
+    }
 
     // Idle-Animation der Blöcke
     this.blocks.updateIdle(dtMs);
