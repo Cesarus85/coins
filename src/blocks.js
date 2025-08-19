@@ -1,20 +1,18 @@
-// ./src/blocks.js
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-// Platzierung / Animation
-const FORWARD_DIST = 1.0;     // Abstand vom Spieler
-const HEIGHT_OFFSET = 0.40;   // etwas über Augenhöhe
-const BLOCK_TARGET_SIZE = 0.30; // Ziel-Kantenlänge der Würfel
-const IDLE_ROT_SPEED = 0.25;  // rad/s
+const FORWARD_DIST = 1.0;
+const HEIGHT_OFFSET = 0.40;
+const BLOCK_TARGET_SIZE = 0.30;
+const IDLE_ROT_SPEED = 0.25;
 const BOUNCE_AMPLITUDE = 0.06;
-const BOUNCE_DURATION  = 0.35; // s pro Bounce
+const BOUNCE_DURATION  = 0.35;
 
-// Anti-Dauerfeuer
+// Anti-„Dauerfeuer“
 const REARM_NO_CONTACT_FRAMES = 8;
-const MIN_FIRE_INTERVAL_S     = 0.35;
+const MIN_FIRE_INTERVAL_S      = 0.35;
 
-// AABB nicht jeden Frame neu berechnen
+// Performance: AABB nicht jeden Frame neu (bei langsamer Idle-Rotation reicht 1/3)
 const AABB_REFRESH_RATE = 3; // alle 3 Frames
 
 export class BlocksManager {
@@ -22,73 +20,65 @@ export class BlocksManager {
     this.scene = scene;
     this.loader = new GLTFLoader();
     this.template = null;
-
-    /** @type {{mesh:THREE.Object3D,aabb:THREE.Box3,bounceT:number,basePos:THREE.Vector3,armed:boolean,noContactFrames:number,lastFireAt:number}[]} */
-    this.blocks = [];
-
-    this._frame = 0;
-
-    // temps
+    this.blocks = []; // {mesh,aabb,bounceT,basePos,armed,noContactFrames,lastFireAt}
+    this._placed = false;
+    this._frameCounter = 0;
+    // Reusable temporaries
     this._tmpCenter = new THREE.Vector3();
     this._tmpClosest = new THREE.Vector3();
-    this._up         = new THREE.Vector3(0,1,0);
+    this._up = new THREE.Vector3(0,1,0);
   }
 
-  // ---------- Lifecycle ----------
   async ensureLoaded() {
     if (this.template) return;
-
-    const gltf = await new Promise((resolve, reject) => {
-      this.loader.load('./assets/wuerfel.glb', resolve, undefined, reject);
-    });
+    const gltf = await this._load('./assets/wuerfel.glb');
     const root = gltf.scene || gltf.scenes?.[0];
     if (!root) throw new Error('wuerfel.glb ohne Szene');
 
-    // auf Zielgröße skalieren
-    const box = new THREE.Box3().setFromObject(root);
-    const size = new THREE.Vector3(); box.getSize(size);
-    const maxSide = Math.max(size.x, size.y, size.z) || 1;
-    const scale = BLOCK_TARGET_SIZE / maxSide;
+    const bounds = new THREE.Box3().setFromObject(root);
+    const size = new THREE.Vector3(); bounds.getSize(size);
+    const srcEdge = Math.max(size.x, size.y, size.z) || 1;
+    const scale = BLOCK_TARGET_SIZE / srcEdge;
     root.scale.setScalar(scale);
 
-    // Materialien etwas XR-freundlicher
     root.traverse(o => {
       if (o.isMesh && o.material) {
-        o.material.depthWrite = true;
-        o.material.depthTest  = true;
-      }
-      // Shadow-Settings optional – falls genutzt
-      if (o.isMesh) {
-        o.castShadow = false;
-        o.receiveShadow = false;
+        if ('metalness' in o.material) o.material.metalness = Math.min(0.2, o.material.metalness ?? 0.2);
+        if ('roughness' in o.material) o.material.roughness = Math.max(0.7, o.material.roughness ?? 0.7);
+        if ('emissiveIntensity' in o.material) o.material.emissiveIntensity = Math.max(0.15, o.material.emissiveIntensity ?? 0.15);
       }
     });
 
-    // als Template merken
     this.template = root;
   }
 
   clear() {
-    for (const b of this.blocks) {
-      b.mesh.removeFromParent();
-    }
+    for (const b of this.blocks) b.mesh?.removeFromParent();
     this.blocks.length = 0;
+    this._placed = false;
   }
 
-  /**
-   * Platziert vier Blöcke (vorne, hinten, rechts, links) um den Viewer herum.
-   * @param {THREE.Vector3} viewerPos
-   * @param {THREE.Quaternion} viewerQuat
-   */
-  placeAroundViewer(viewerPos, viewerQuat) {
-    if (!this.template) throw new Error('ensureLoaded() vor placeAroundViewer() aufrufen');
-
+  dispose() {
     this.clear();
+    if (this.template) {
+      this.template.traverse(o => {
+        if (o.isMesh) {
+          o.geometry?.dispose?.();
+          const m = o.material;
+          if (m) Array.isArray(m) ? m.forEach(x => x.dispose?.()) : m.dispose?.();
+        }
+      });
+    }
+    this.template = null;
+  }
 
-    // lokale Achsen aus der Kopfhaltung
-    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(viewerQuat).setY(0).normalize();
-    const right   = new THREE.Vector3().crossVectors(forward, this._up).normalize().negate(); // XR: rechtsherum
-    const up      = this._up;
+  placeAroundViewer(viewerPos, viewerQuat) {
+    if (this._placed) return;
+    this._placed = true;
+
+    const forward = new THREE.Vector3(0,0,-1).applyQuaternion(viewerQuat).normalize();
+    const right   = new THREE.Vector3(1,0,0).applyQuaternion(viewerQuat).normalize();
+    const up      = new THREE.Vector3(0,1,0);
 
     const positions = [
       viewerPos.clone().add(forward.clone().multiplyScalar(FORWARD_DIST)).add(up.clone().multiplyScalar(HEIGHT_OFFSET)),
@@ -100,12 +90,9 @@ export class BlocksManager {
     for (const pos of positions) {
       const mesh = this.template.clone(true);
       mesh.position.copy(pos);
-
-      // horizontal zum Spieler ausrichten
       const look = new THREE.Vector3(viewerPos.x, mesh.position.y, viewerPos.z);
       mesh.lookAt(look);
       mesh.frustumCulled = true;
-
       this.scene.add(mesh);
 
       const aabb = new THREE.Box3().setFromObject(mesh);
@@ -120,78 +107,81 @@ export class BlocksManager {
     }
   }
 
-  // ---------- Update ----------
-  /** Idle-Rotation + sanftes „Bouncing“ animieren. */
   updateIdle(dtMs) {
-    const dt = Math.max(0, (dtMs ?? 0) / 1000);
-    this._frame++;
+    const dt = (dtMs ?? 16.666) / 1000;
+    this._frameCounter++;
 
+    // Notbremse
+    if (this.blocks.length > 4) {
+      for (let i = 4; i < this.blocks.length; i++) this.blocks[i].mesh?.removeFromParent();
+      this.blocks.length = 4;
+    }
+
+    // Rotation + Bounce
     for (const b of this.blocks) {
-      // Rotation
-      b.mesh.rotation.y += IDLE_ROT_SPEED * dt;
-
-      // Bounce ablaufen lassen
+      b.mesh.rotateY(IDLE_ROT_SPEED * dt);
       if (b.bounceT > 0) {
-        b.bounceT = Math.max(0, b.bounceT - dt);
+        b.bounceT = Math.min(BOUNCE_DURATION, b.bounceT + dt);
+        const k = b.bounceT / BOUNCE_DURATION;
+        const yOff = Math.sin(k * Math.PI) * BOUNCE_AMPLITUDE;
+        b.mesh.position.set(b.basePos.x, b.basePos.y + yOff, b.basePos.z);
+        if (b.bounceT >= BOUNCE_DURATION) {
+          b.bounceT = 0;
+          b.mesh.position.copy(b.basePos);
+        }
       }
-      const t = THREE.MathUtils.clamp(1 - b.bounceT / BOUNCE_DURATION, 0, 1);
-      const yOff = Math.sin(t * Math.PI) * BOUNCE_AMPLITUDE * (b.bounceT > 0 ? 1 : 0);
-      b.mesh.position.set(b.basePos.x, b.basePos.y + yOff, b.basePos.z);
-
-      // AABB nicht jeden Frame
-      if (this._frame % AABB_REFRESH_RATE === 0) {
+      // AABB nur alle N Frames refreshen
+      if (this._frameCounter % AABB_REFRESH_RATE === 0) {
         b.aabb.setFromObject(b.mesh);
       }
     }
   }
 
-  /**
-   * Prüft Kollisionen gegen Interaktionssphären und liefert Coin-/Fail-Bursts zurück.
-   * Erwartete Sphere-Struktur: { center: THREE.Vector3, radius: number, velocity?: THREE.Vector3 }
-   * @param {{center:THREE.Vector3, radius:number, velocity?:THREE.Vector3}[]} spheres
-   * @returns {{spawnPos:THREE.Vector3, upNormal:THREE.Vector3}[]}
-   */
   testHitsAndGetBursts(spheres) {
-    if (!Array.isArray(spheres) || !spheres.length) return [];
-    const now = performance.now() / 1000;
     const bursts = [];
+    const up = this._up;
+    const now = performance.now() / 1000;
 
     for (const block of this.blocks) {
-      let anyContact = false;
+      // bei seltenerem Refresh evtl. initial sicherstellen:
+      block.aabb.setFromObject(block.mesh);
+
+      let anyContact = false; let fired = false;
+
+      const center = block.aabb.getCenter(this._tmpCenter);
 
       for (const s of spheres) {
-        if (!s?.center || !s?.radius) continue;
+        // Sphere vs AABB
+        const c = this._tmpClosest;
+        c.set(
+          THREE.MathUtils.clamp(s.center.x, block.aabb.min.x, block.aabb.max.x),
+          THREE.MathUtils.clamp(s.center.y, block.aabb.min.y, block.aabb.max.y),
+          THREE.MathUtils.clamp(s.center.z, block.aabb.min.z, block.aabb.max.z),
+        );
+        const dx = s.center.x - c.x, dy = s.center.y - c.y, dz = s.center.z - c.z;
+        const distSq = dx*dx + dy*dy + dz*dz;
+        const r = s.radius * 1.02;
+        if (distSq > r*r) continue;
 
-        // Abstand Sphere <-> AABB
-        block.aabb.clampPoint(s.center, this._tmpClosest);
-        const dist = this._tmpClosest.distanceTo(s.center);
-        const overlap = s.radius - dist;
+        anyContact = true;
 
-        if (overlap > 0) {
-          anyContact = true;
+        // nicht von oben
+        const toBlock = center.clone().sub(s.center).normalize();
+        const fromAbove = toBlock.dot(up) < -0.4;
+        if (fromAbove) continue;
 
-          // nur „Schlag nach oben“ zählen (optional)
-          const v = s.velocity || this._up; // Fallback
-          const upDot = v.clone().normalize().dot(this._up);
+        if (!fired && block.armed && (now - block.lastFireAt) >= MIN_FIRE_INTERVAL_S) {
+          const topCenter = new THREE.Vector3(center.x, block.aabb.max.y, center.z);
+          const spawnPos = topCenter.addScaledVector(up, 0.03);
+          bursts.push({ spawnPos, upNormal: up.clone() });
 
-          const canFire = block.armed &&
-                          (now - block.lastFireAt) > MIN_FIRE_INTERVAL_S &&
-                          upDot > 0.2; // kleiner Schwellenwert
-
-          if (canFire) {
-            block.lastFireAt = now;
-            block.armed = false;
-            block.bounceT = BOUNCE_DURATION;
-
-            // Spawn-Position = AABB-Top-Mitte
-            block.aabb.getCenter(this._tmpCenter);
-            const spawnPos = new THREE.Vector3(this._tmpCenter.x, block.aabb.max.y, this._tmpCenter.z);
-            bursts.push({ spawnPos, upNormal: this._up.clone() });
-          }
+          block.bounceT = 1e-6;
+          block.armed = false;
+          block.lastFireAt = now;
+          fired = true;
         }
       }
 
-      // Rearm-Logik
       if (!anyContact) {
         block.noContactFrames++;
         if (block.noContactFrames >= REARM_NO_CONTACT_FRAMES) {
@@ -202,7 +192,12 @@ export class BlocksManager {
         block.noContactFrames = 0;
       }
     }
-
     return bursts;
+  }
+
+  _load(url) {
+    return new Promise((resolve, reject) => {
+      this.loader.load(url, resolve, undefined, reject);
+    });
   }
 }
