@@ -147,9 +147,9 @@ export class MathGame {
     const L = Math.max(size.x, size.y, size.z);
     const half = L * 0.5;
 
-    // Sichtfläche ~ 60% der Seite, moderater Abstand zur Oberfläche
+    // Sichtfläche ~ 60% der Seite, großer Abstand zur Oberfläche
     const faceSize = L * 0.6;
-    const eps = L * 0.05; // Kleinerer Abstand zur Oberfläche - direkt auf der Oberfläche
+    const eps = L * 0.2; // Großer Abstand - deutlich außerhalb des Würfels
 
     // Alle 6 Planes passend anordnen
     const planes = block.labelGroup.children;
@@ -159,30 +159,32 @@ export class MathGame {
       p.rotation.set(0, 0, 0);
     }
 
-    // Korrekte Rotationen für Würfelflächen (ohne 45-Grad-Versatz)
+    // Korrigierte Rotationen - alle um 45 Grad gedreht
+    const deg45 = Math.PI / 4; // 45 Grad
+    
     // +X (rechte Seite)
     planes[0].position.set(half + eps, 0, 0);
-    planes[0].rotation.set(0, Math.PI/2, 0);
+    planes[0].rotation.set(0, Math.PI/2 + deg45, 0);
     
     // -X (linke Seite)  
     planes[1].position.set(-half - eps, 0, 0);
-    planes[1].rotation.set(0, -Math.PI/2, 0);
+    planes[1].rotation.set(0, -Math.PI/2 + deg45, 0);
     
     // +Y (obere Seite)
     planes[2].position.set(0, half + eps, 0);
-    planes[2].rotation.set(-Math.PI/2, 0, 0);
+    planes[2].rotation.set(-Math.PI/2, 0, deg45);
     
     // -Y (untere Seite)
     planes[3].position.set(0, -half - eps, 0);
-    planes[3].rotation.set(Math.PI/2, 0, 0);
+    planes[3].rotation.set(Math.PI/2, 0, deg45);
     
     // +Z (vordere Seite)
     planes[4].position.set(0, 0, half + eps);
-    planes[4].rotation.set(0, 0, 0);
+    planes[4].rotation.set(0, deg45, 0);
     
     // -Z (hintere Seite)
     planes[5].position.set(0, 0, -half - eps);
-    planes[5].rotation.set(0, Math.PI, 0);
+    planes[5].rotation.set(0, Math.PI + deg45, 0);
   }
 
   _setBlockNumber(block, value) {
