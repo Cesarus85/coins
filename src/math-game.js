@@ -96,72 +96,70 @@ export class MathGame {
     for (let i = 0; i < n; i++) this._setBlockNumber(this.blocks[i], values[i]);
   }
 
-  _createLabelGroup() {
-    const g = new THREE.Group();
+_createLabelGroup() {
+  const g = new THREE.Group();
+  g.name = 'labels';
 
-    // Geometrie (Skalierung folgt block-spezifisch)
-    const geom = new THREE.PlaneGeometry(1, 1);
+  const geom = new THREE.PlaneGeometry(1, 1);
+  const makeMat = () => new THREE.MeshBasicMaterial({
+    transparent: true,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+    depthTest: true,          // NICHT durch den Würfel hindurch zeichnen
+    depthWrite: false,
+    polygonOffset: true,      // gegen Z-Fighting
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1
+  });
 
-    const makeMat = () => {
-      const mat = new THREE.MeshBasicMaterial({
-        transparent: true,
-        side: THREE.DoubleSide,
-        toneMapped: false,
-        depthTest: true,      // wichtig: nicht durch den Würfel hindurch zeichnen
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1
-      });
-      mat.opacity = 1.0;
-      return mat;
-    };
-
-    // 6 Planes (eine pro Seite)
-    for (let i = 0; i < 6; i++) {
-      const m = new THREE.Mesh(geom, makeMat());
-      m.renderOrder = 10; // vor dem Block
-      g.add(m);
-    }
-
-    return g;
+  for (let i = 0; i < 6; i++) {
+    const m = new THREE.Mesh(geom, makeMat());
+    m.renderOrder = 10;       // sicher vor dem Block
+    g.add(m);
   }
+  return g;
+}
 
   /** Positioniert & skaliert die Label-Gruppe exakt auf die Außenflächen (unabhängig vom Pivot). */
-  _resizeLabelGroupToBlock(block) {
-    const mesh = block.mesh;
-    if (!mesh) return;
+_resizeLabelGroupToBlock(block) {
+  const mesh = block.mesh;
+  if (!mesh || !block.labelGroup) return;
 
-    // Welt-BBox des Blocks
-    const worldBox = new THREE.Box3().setFromObject(mesh);
-    const size = new THREE.Vector3(); worldBox.getSize(size);
-    const worldCenter = new THREE.Vector3(); worldBox.getCenter(worldCenter);
+  // Label-Gruppe kurz abkoppeln, damit sie die Messung NICHT beeinflusst
+  const hadParent = !!block.labelGroup.parent;
+  mesh.remove(block.labelGroup);
 
-    // BBox-Zentrum in lokale Koordinaten des Blocks
-    const localCenter = mesh.worldToLocal(worldCenter.clone());
-    block.labelGroup.position.copy(localCenter);
+  const worldBox = new THREE.Box3().setFromObject(mesh);
+  const size = new THREE.Vector3(); worldBox.getSize(size);
+  const worldCenter = new THREE.Vector3(); worldBox.getCenter(worldCenter);
 
-    // Kantenlänge & Offsets
-    const L = Math.max(size.x, size.y, size.z);
-    const half = L * 0.5;
-    const faceSize = L * 0.70;   // 70% der Fläche
-    const eps = L * 0.02;        // vor die Oberfläche (gegen Z-Fighting)
+  // Danach Labels wieder anhängen
+  mesh.add(block.labelGroup);
 
-    // Planes skalieren
-    const planes = block.labelGroup.children;
-    for (const p of planes) p.scale.set(faceSize, faceSize, 1);
+  // BBox-Zentrum in LOKALE Koordinaten des Blocks
+  const localCenter = mesh.worldToLocal(worldCenter.clone());
+  block.labelGroup.position.copy(localCenter);
 
-    // Seiten korrekt positionieren/ausrichten (relativ zum lokalen Zentrum)
-    // +X / -X
-    planes[0].position.set( half + eps, 0, 0); planes[0].rotation.set(0, -Math.PI/2, 0);
-    planes[1].position.set(-half - eps, 0, 0); planes[1].rotation.set(0,  Math.PI/2, 0);
-    // +Y / -Y
-    planes[2].position.set(0,  half + eps, 0); planes[2].rotation.set( Math.PI/2, 0, 0);
-    planes[3].position.set(0, -half - eps, 0); planes[3].rotation.set(-Math.PI/2, 0, 0);
-    // +Z / -Z
-    planes[4].position.set(0, 0,  half + eps); planes[4].rotation.set(0, 0, 0);
-    planes[5].position.set(0, 0, -half - eps); planes[5].rotation.set(0,  Math.PI, 0);
-  }
+  // Kantenlänge (größte Ausdehnung) und Versatz
+  const L    = Math.max(size.x, size.y, size.z);
+  const half = L * 0.5;
+  const face = L * 0.72;      // 72% der Seitenlänge
+  const eps  = L * 0.03;      // 3% vor die Oberfläche → robust gegen Z-Fighting
+
+  // Planes skalieren
+  const p = block.labelGroup.children;
+  for (const plane of p) plane.scale.set(face, face, 1);
+
+  // +X / -X
+  p[0].position.set( half + eps, 0, 0); p[0].rotation.set(0, -Math.PI/2, 0);
+  p[1].position.set(-half - eps, 0, 0); p[1].rotation.set(0,  Math.PI/2,  0);
+  // +Y / -Y
+  p[2].position.set(0,  half + eps, 0); p[2].rotation.set( Math.PI/2, 0, 0);
+  p[3].position.set(0, -half - eps, 0); p[3].rotation.set(-Math.PI/2, 0, 0);
+  // +Z / -Z
+  p[4].position.set(0, 0,  half + eps); p[4].rotation.set(0, 0, 0);
+  p[5].position.set(0, 0, -half - eps); p[5].rotation.set(0,  Math.PI, 0);
+}
 
   _setBlockNumber(block, value) {
     if (!block?.labelGroup) return;
@@ -176,38 +174,37 @@ export class MathGame {
     });
   }
 
-  _getOrMakeNumberTexture(text) {
-    if (this.texCache.has(text)) return /** @type {THREE.Texture} */(this.texCache.get(text));
+_getOrMakeNumberTexture(text) {
+  if (this.texCache.has(text)) return this.texCache.get(text);
 
-    const size = 512;
-    const cv = document.createElement('canvas');
-    cv.width = size; cv.height = size;
-    const ctx = cv.getContext('2d');
+  const size = 512;
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const ctx = cv.getContext('2d');
 
-    // transparent
-    ctx.clearRect(0, 0, size, size);
+  ctx.clearRect(0, 0, size, size);
+  ctx.font = `${size * 0.62}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
 
-    // Outline
-    ctx.font = `${size * 0.62}px sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.lineJoin = 'round';
-    ctx.lineWidth = size * 0.06;
-    ctx.strokeStyle = 'rgba(0,0,0,0.75)';
-    ctx.strokeText(text, size / 2, size / 2);
+  // dunkle Outline für Kontrast
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = size * 0.06;
+  ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+  ctx.strokeText(text, size / 2, size / 2);
 
-    // Füllung
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(text, size / 2, size / 2);
+  // helle Füllung
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(text, size / 2, size / 2);
 
-    const tex = new THREE.CanvasTexture(cv);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.minFilter = THREE.LinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-    tex.anisotropy = 4;
-    tex.needsUpdate = true;
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace; // richtige Farbraum-Kodierung
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = 4;
+  tex.needsUpdate = true;
 
-    this.texCache.set(text, tex);
-    return tex;
-  }
+  this.texCache.set(text, tex);
+  return tex;
+}
 }
