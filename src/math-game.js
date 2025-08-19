@@ -107,9 +107,6 @@ export class MathGame {
 
   _createLabelGroup() {
     const g = new THREE.Group();
-    // Geometrie ist egal – wir skalieren/positionieren später je Block
-    const geom = new THREE.PlaneGeometry(1, 1);
-
     const makeMat = () => {
       const mat = new THREE.MeshBasicMaterial({
         transparent: true,
@@ -125,7 +122,8 @@ export class MathGame {
     };
 
     const planes = [];
-    for (let i=0;i<6;i++) {
+    for (let i = 0; i < 6; i++) {
+      const geom = this._createPlaneGeometryForFace(i);
       const m = new THREE.Mesh(geom, makeMat());
       m.renderOrder = 1000; // sehr hohe Priorität über der Blockoberfläche
       m.name = `label_face_${i}`;
@@ -133,6 +131,46 @@ export class MathGame {
       planes.push(m); g.add(m);
     }
     return g;
+  }
+
+  _createPlaneGeometryForFace(faceIndex) {
+    const geom = new THREE.PlaneGeometry(1, 1);
+    const uvs = geom.attributes.uv.array;
+
+    // Define UV transform function for each face to make text upright and unmirrored
+    let transform = (u, v) => ({ u, v }); // Default: no change
+    switch (faceIndex) {
+      case 0: // +X (right face): Rotate UV 90° counterclockwise to counteract the -90° Y rotation
+        transform = (u, v) => ({ u: 1 - v, v: u });
+        break;
+      case 1: // -X (left face): Rotate UV 90° clockwise to counteract the +90° Y rotation
+        transform = (u, v) => ({ u: v, v: 1 - u });
+        break;
+      case 2: // +Y (top face): Flip U if text appears reversed; alternative: (u, 1 - v) if upside down
+        transform = (u, v) => ({ u: 1 - u, v: v });
+        break;
+      case 3: // -Y (bottom face): Flip V if upside down; alternative: (1 - u, v) if reversed
+        transform = (u, v) => ({ u: u, v: 1 - v });
+        break;
+      case 4: // +Z (front face): No change needed
+        break;
+      case 5: // -Z (back face): Flip U horizontally to fix mirroring from 180° Y rotation
+        transform = (u, v) => ({ u: 1 - u, v: v });
+        break;
+    }
+
+    // Apply transform to the 4 UV coordinates (original: [0,0, 1,0, 0,1, 1,1])
+    const origUvs = [0, 0, 1, 0, 0, 1, 1, 1];
+    for (let j = 0; j < 4; j++) {
+      const ou = origUvs[j * 2];
+      const ov = origUvs[j * 2 + 1];
+      const tv = transform(ou, ov);
+      uvs[j * 2] = tv.u;
+      uvs[j * 2 + 1] = tv.v;
+    }
+
+    geom.attributes.uv.needsUpdate = true;
+    return geom;
   }
 
   _resizeLabelGroupToBlock(block) {
@@ -204,3 +242,4 @@ export class MathGame {
     return tex;
   }
 }
+```
