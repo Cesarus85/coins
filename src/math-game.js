@@ -147,9 +147,9 @@ export class MathGame {
     const L = Math.max(size.x, size.y, size.z);
     const half = L * 0.5;
 
-    // Sichtfläche ~ 60% der Seite, großer Abstand zur Oberfläche
+    // Sichtfläche ~ 60% der Seite, sehr großer Abstand zur Oberfläche
     const faceSize = L * 0.6;
-    const eps = L * 0.2; // Großer Abstand - deutlich außerhalb des Würfels
+    const eps = L * 0.4; // Sehr großer Abstand - weit außerhalb des Würfels
 
     // Alle 6 Planes passend anordnen
     const planes = block.labelGroup.children;
@@ -159,32 +159,36 @@ export class MathGame {
       p.rotation.set(0, 0, 0);
     }
 
-    // Korrigierte Rotationen - alle um 45 Grad gedreht
-    const deg45 = Math.PI / 4; // 45 Grad
+    // Korrigierte Rotationen - alle um 90 Grad gedreht (45 + weitere 45)
+    const deg90 = Math.PI / 2; // 90 Grad
     
     // +X (rechte Seite)
     planes[0].position.set(half + eps, 0, 0);
-    planes[0].rotation.set(0, Math.PI/2 + deg45, 0);
+    planes[0].rotation.set(0, Math.PI/2 + deg90, 0);
+    planes[0].visible = true; // seitliche Fläche - sichtbar
     
     // -X (linke Seite)  
     planes[1].position.set(-half - eps, 0, 0);
-    planes[1].rotation.set(0, -Math.PI/2 + deg45, 0);
+    planes[1].rotation.set(0, -Math.PI/2 + deg90, 0);
+    planes[1].visible = true; // seitliche Fläche - sichtbar
     
-    // +Y (obere Seite)
+    // +Y (obere Seite) - AUSBLENDEN
     planes[2].position.set(0, half + eps, 0);
-    planes[2].rotation.set(-Math.PI/2, 0, deg45);
+    planes[2].visible = false; // Oberseite - ausgeblendet
     
-    // -Y (untere Seite)
+    // -Y (untere Seite) - AUSBLENDEN
     planes[3].position.set(0, -half - eps, 0);
-    planes[3].rotation.set(Math.PI/2, 0, deg45);
+    planes[3].visible = false; // Unterseite - ausgeblendet
     
     // +Z (vordere Seite)
     planes[4].position.set(0, 0, half + eps);
-    planes[4].rotation.set(0, deg45, 0);
+    planes[4].rotation.set(0, deg90, 0);
+    planes[4].visible = true; // seitliche Fläche - sichtbar
     
     // -Z (hintere Seite)
     planes[5].position.set(0, 0, -half - eps);
-    planes[5].rotation.set(0, Math.PI + deg45, 0);
+    planes[5].rotation.set(0, Math.PI + deg90, 0);
+    planes[5].visible = true; // seitliche Fläche - sichtbar
   }
 
   _setBlockNumber(block, value) {
