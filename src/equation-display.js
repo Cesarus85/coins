@@ -12,11 +12,11 @@ export class EquationDisplay {
   createDisplay(viewerPos, viewerQuat) {
     if (this.mesh) return;
 
-    // Position vor dem Spieler, etwas höher
+    // Position vor dem Spieler, am unteren Sichtfeldrand aber gut lesbar
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(viewerQuat);
     const position = viewerPos.clone()
       .add(forward.multiplyScalar(0.8))
-      .add(new THREE.Vector3(0, 0.6, 0));
+      .add(new THREE.Vector3(0, -0.2, 0));
 
     // Plane für die Gleichung
     const geometry = new THREE.PlaneGeometry(0.6, 0.15);
@@ -58,11 +58,11 @@ export class EquationDisplay {
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(viewerQuat);
     const targetPos = viewerPos.clone()
       .add(forward.multiplyScalar(0.8))
-      .add(new THREE.Vector3(0, 0.6, 0));
+      .add(new THREE.Vector3(0, -0.2, 0));
 
     // Sanfte Interpolation zur neuen Position
     this.mesh.position.lerp(targetPos, 0.05);
-    this.mesh.lookAt(viewerPos.clone().add(new THREE.Vector3(0, 0.6, 0)));
+    this.mesh.lookAt(viewerPos.clone().add(new THREE.Vector3(0, -0.2, 0)));
   }
 
   dispose() {
