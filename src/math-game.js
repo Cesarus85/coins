@@ -113,14 +113,13 @@ export class MathGame {
     const makeMat = () => {
       const mat = new THREE.MeshBasicMaterial({
         transparent: true,
-        side: THREE.DoubleSide, // Von beiden Seiten sichtbar
+        side: THREE.DoubleSide,
         toneMapped: false,
-        depthTest: false, // Depth-Test deaktivieren für bessere Sichtbarkeit
-        depthWrite: false, // Depth-Write deaktivieren
+        depthTest: false,
+        depthWrite: false,
         polygonOffset: true,
         polygonOffsetFactor: -10,
-        polygonOffsetUnits: -10,
-        opacity: 1.0 // Vollständig sichtbar
+        polygonOffsetUnits: -10
       });
       return mat;
     };
@@ -128,10 +127,9 @@ export class MathGame {
     const planes = [];
     for (let i=0;i<6;i++) {
       const m = new THREE.Mesh(geom, makeMat());
-      m.renderOrder = 1000; // hohe Priorität über der Blockoberfläche
+      m.renderOrder = 1000; // sehr hohe Priorität über der Blockoberfläche
       m.name = `label_face_${i}`;
       m.frustumCulled = false; // immer rendern
-      m.visible = true; // explizit sichtbar setzen
       planes.push(m); g.add(m);
     }
     return g;
@@ -147,69 +145,32 @@ export class MathGame {
     const L = Math.max(size.x, size.y, size.z);
     const half = L * 0.5;
 
-    // Sichtfläche ~ 80% der Seite, minimaler Abstand zur Oberfläche
+    // Sichtfläche ~ 80% der Seite, aber größerer Abstand zur Oberfläche
     const faceSize = L * 0.8;
-    const eps = L * 0.01; // Minimaler Abstand - direkt an der Würfeloberfläche
+    const eps = L * 0.1; // Größerer Abstand zur Oberfläche
 
     // Alle 6 Planes passend anordnen
     const planes = block.labelGroup.children;
-    for (const p of planes) { 
-      p.scale.set(faceSize, faceSize, 1);
-      // Reset rotation first
-      p.rotation.set(0, 0, 0);
-    }
+    for (const p of planes) { p.scale.set(faceSize, faceSize, 1); }
 
-    // Korrigierte Rotationen - alle um 135 Grad gedreht (90 + weitere 45)
-    const deg135 = Math.PI * 3/4; // 135 Grad
-    
-    // +X (rechte Seite)
-    planes[0].position.set(half + eps, 0, 0);
-    planes[0].rotation.set(0, Math.PI/2 + deg135, 0);
-    planes[0].visible = true; // seitliche Fläche - sichtbar
-    
-    // -X (linke Seite)  
-    planes[1].position.set(-half - eps, 0, 0);
-    planes[1].rotation.set(0, -Math.PI/2 + deg135, 0);
-    planes[1].visible = true; // seitliche Fläche - sichtbar
-    
-    // +Y (obere Seite) - AUSBLENDEN
-    planes[2].position.set(0, half + eps, 0);
-    planes[2].visible = false; // Oberseite - ausgeblendet
-    
-    // -Y (untere Seite) - AUSBLENDEN
-    planes[3].position.set(0, -half - eps, 0);
-    planes[3].visible = false; // Unterseite - ausgeblendet
-    
-    // +Z (vordere Seite)
-    planes[4].position.set(0, 0, half + eps);
-    planes[4].rotation.set(0, deg135, 0);
-    planes[4].visible = true; // seitliche Fläche - sichtbar
-    
-    // -Z (hintere Seite)
-    planes[5].position.set(0, 0, -half - eps);
-    planes[5].rotation.set(0, Math.PI + deg135, 0);
-    planes[5].visible = true; // seitliche Fläche - sichtbar
+    // +X / -X
+    planes[0].position.set( half + eps, 0, 0); planes[0].rotation.set(0, -Math.PI/2, 0);
+    planes[1].position.set(-half - eps, 0, 0); planes[1].rotation.set(0,  Math.PI/2, 0);
+    // +Y / -Y
+    planes[2].position.set(0,  half + eps, 0); planes[2].rotation.set( Math.PI/2, 0, 0);
+    planes[3].position.set(0, -half - eps, 0); planes[3].rotation.set(-Math.PI/2, 0, 0);
+    // +Z / -Z
+    planes[4].position.set(0, 0,  half + eps); planes[4].rotation.set(0, 0, 0);
+    planes[5].position.set(0, 0, -half - eps); planes[5].rotation.set(0,  Math.PI, 0);
   }
 
   _setBlockNumber(block, value) {
-    if (!block?.labelGroup) {
-      console.warn('Block has no labelGroup:', block);
-      return;
-    }
+    if (!block?.labelGroup) return;
     const text = String(value);
     const tex = this._getOrMakeNumberTexture(text);
-    console.log(`Setting number ${text} on block, texture:`, tex);
-    
-    let meshCount = 0;
     block.labelGroup.traverse(o => {
-      if (o.isMesh && o.material) { 
-        o.material.map = tex; 
-        o.material.needsUpdate = true;
-        o.visible = true; // explizit sichtbar setzen
-        meshCount++;
-      }
+      if (o.isMesh && o.material) { o.material.map = tex; o.material.needsUpdate = true; }
     });
-    console.log(`Updated ${meshCount} meshes for number ${text}`);
   }
 
   _getOrMakeNumberTexture(text) {
