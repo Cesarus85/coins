@@ -16,14 +16,13 @@ export class MathGame {
 
   attachBlocks(blocks, viewerPos = null, viewerQuat = null) {
     this.blocks = blocks || [];
-    // Label-Gruppen anlegen/skalieren
-    this.blocks.forEach((b) => {
+    // Neue separate Anzeigetafeln neben den Blöcken erstellen
+    this.blocks.forEach((b, index) => {
       if (!b?.mesh) return;
-      if (!b.labelGroup) {
-        b.labelGroup = this._createLabelGroup();
-        b.mesh.add(b.labelGroup);
+      if (!b.numberDisplay) {
+        b.numberDisplay = this._createNumberDisplay(b.mesh, viewerPos);
+        this.scene.add(b.numberDisplay);
       }
-      this._resizeLabelGroupToBlock(b);
     });
 
     // 3D Gleichungsanzeige erstellen falls Viewer-Position verfügbar
@@ -54,14 +53,14 @@ export class MathGame {
 
   dispose() {
     for (const b of this.blocks) {
-      if (b?.labelGroup) {
-        b.labelGroup.traverse(o => {
+      if (b?.numberDisplay) {
+        b.numberDisplay.traverse(o => {
           if (o.isMesh && o.material?.map) o.material.map.dispose?.();
           if (o.isMesh && o.material) o.material.dispose?.();
           if (o.geometry) o.geometry.dispose?.();
         });
-        b.labelGroup.removeFromParent();
-        b.labelGroup = undefined;
+        b.numberDisplay.removeFromParent();
+        b.numberDisplay = undefined;
       }
     }
     this.equationDisplay.dispose();
@@ -105,139 +104,95 @@ export class MathGame {
     for (let i=0;i<values.length;i++) this._setBlockNumber(this.blocks[i], values[i]);
   }
 
-  _createLabelGroup() {
-    const g = new THREE.Group();
-    const makeMat = () => {
-      const mat = new THREE.MeshBasicMaterial({
-        transparent: true,
-        side: THREE.DoubleSide,
-        toneMapped: false,
-        depthTest: false,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -10,
-        polygonOffsetUnits: -10
-      });
-      return mat;
-    };
+  _createNumberDisplay(blockMesh, viewerPos) {
+    const group = new THREE.Group();
+    
+    // Größe der Anzeigeplatte
+    const displaySize = 0.25;
+    const geometry = new THREE.PlaneGeometry(displaySize, displaySize * 0.6);
+    
+    const material = new THREE.MeshBasicMaterial({
+      transparent: true,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+      depthTest: false,
+      depthWrite: false
+    });
 
-    const planes = [];
-    for (let i = 0; i < 6; i++) {
-      const geom = this._createPlaneGeometryForFace(i);
-      const m = new THREE.Mesh(geom, makeMat());
-      m.renderOrder = 1000; // sehr hohe Priorität über der Blockoberfläche
-      m.name = `label_face_${i}`;
-      m.frustumCulled = false; // immer rendern
-      planes.push(m); g.add(m);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 2000;
+    mesh.frustumCulled = false;
+    group.add(mesh);
+
+    // Position neben dem Block berechnen
+    const blockPos = blockMesh.position.clone();
+    
+    // Richtung vom Viewer zum Block berechnen
+    const toBlock = blockPos.clone().sub(viewerPos || new THREE.Vector3(0, 0, 0)).normalize();
+    
+    // Seitliche Verschiebung (rechts vom Block aus Sicht des Viewers)
+    const right = new THREE.Vector3(0, 1, 0).cross(toBlock).normalize();
+    
+    // Position der Anzeige: neben dem Block, etwas oberhalb
+    const displayPos = blockPos.clone()
+      .add(right.multiplyScalar(0.4))  // seitlich versetzt
+      .add(new THREE.Vector3(0, 0.2, 0)); // etwas höher
+    
+    group.position.copy(displayPos);
+    
+    // Anzeige zum Viewer ausrichten
+    if (viewerPos) {
+      group.lookAt(viewerPos.clone().add(new THREE.Vector3(0, 0.2, 0)));
     }
-    return g;
-  }
-
-  _createPlaneGeometryForFace(faceIndex) {
-    const geom = new THREE.PlaneGeometry(1, 1);
-    const uvs = geom.attributes.uv.array;
-
-    // Define UV transform function for each face to make text upright and unmirrored
-    let transform = (u, v) => ({ u, v }); // Default: no change
-    switch (faceIndex) {
-      case 0: // +X (right face): Rotate UV 90° counterclockwise to counteract the -90° Y rotation
-        transform = (u, v) => ({ u: 1 - v, v: u });
-        break;
-      case 1: // -X (left face): Rotate UV 90° clockwise to counteract the +90° Y rotation
-        transform = (u, v) => ({ u: v, v: 1 - u });
-        break;
-      case 2: // +Y (top face): Flip U if text appears reversed; alternative: (u, 1 - v) if upside down
-        transform = (u, v) => ({ u: 1 - u, v: v });
-        break;
-      case 3: // -Y (bottom face): Flip V if upside down; alternative: (1 - u, v) if reversed
-        transform = (u, v) => ({ u: u, v: 1 - v });
-        break;
-      case 4: // +Z (front face): No change needed
-        break;
-      case 5: // -Z (back face): Flip U horizontally to fix mirroring from 180° Y rotation
-        transform = (u, v) => ({ u: 1 - u, v: v });
-        break;
-    }
-
-    // Apply transform to the 4 UV coordinates (original: [0,0, 1,0, 0,1, 1,1])
-    const origUvs = [0, 0, 1, 0, 0, 1, 1, 1];
-    for (let j = 0; j < 4; j++) {
-      const ou = origUvs[j * 2];
-      const ov = origUvs[j * 2 + 1];
-      const tv = transform(ou, ov);
-      uvs[j * 2] = tv.u;
-      uvs[j * 2 + 1] = tv.v;
-    }
-
-    geom.attributes.uv.needsUpdate = true;
-    return geom;
-  }
-
-  _resizeLabelGroupToBlock(block) {
-    const mesh = block.mesh;
-    const box = new THREE.Box3().setFromObject(mesh);
-    const size = new THREE.Vector3();
-    box.getSize(size);
-
-    // Kantenlänge des Würfels (heuristisch: größte Dimension)
-    const L = Math.max(size.x, size.y, size.z);
-    const half = L * 0.5;
-
-    // Sichtfläche ~ 80% der Seite, aber größerer Abstand zur Oberfläche
-    const faceSize = L * 0.8;
-    const eps = L * 0.1; // Größerer Abstand zur Oberfläche
-
-    // Alle 6 Planes passend anordnen
-    const planes = block.labelGroup.children;
-    for (const p of planes) { p.scale.set(faceSize, faceSize, 1); }
-
-    // +X / -X
-    planes[0].position.set( half + eps, 0, 0); planes[0].rotation.set(0, -Math.PI/2, 0);
-    planes[1].position.set(-half - eps, 0, 0); planes[1].rotation.set(0,  Math.PI/2, 0);
-    // +Y / -Y
-    planes[2].position.set(0,  half + eps, 0); planes[2].rotation.set( Math.PI/2, 0, 0);
-    planes[3].position.set(0, -half - eps, 0); planes[3].rotation.set(-Math.PI/2, 0, 0);
-    // +Z / -Z
-    planes[4].position.set(0, 0,  half + eps); planes[4].rotation.set(0, 0, 0);
-    planes[5].position.set(0, 0, -half - eps); planes[5].rotation.set(0,  Math.PI, 0);
+    
+    return group;
   }
 
   _setBlockNumber(block, value) {
-    if (!block?.labelGroup) return;
+    if (!block?.numberDisplay) return;
     const text = String(value);
     const tex = this._getOrMakeNumberTexture(text);
-    block.labelGroup.traverse(o => {
-      if (o.isMesh && o.material) { o.material.map = tex; o.material.needsUpdate = true; }
-    });
+    // Nur das erste Mesh in der numberDisplay aktualisieren (das ist unsere Anzeigeplatte)
+    const mesh = block.numberDisplay.children[0];
+    if (mesh && mesh.isMesh && mesh.material) {
+      mesh.material.map = tex;
+      mesh.material.needsUpdate = true;
+    }
   }
 
   _getOrMakeNumberTexture(text) {
     if (this.texCache.has(text)) return this.texCache.get(text);
-    const size = 512;
-    const cv = document.createElement('canvas');
-    cv.width = size; cv.height = size;
-    const ctx = cv.getContext('2d');
-    ctx.clearRect(0,0,size,size);
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 150;
+    const ctx = canvas.getContext('2d');
 
-    // weiche Outline + Schatten
-    ctx.font = 'bold 360px system-ui, Arial, sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    // Hintergrund - ähnlich wie bei der Gleichungsanzeige
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillText(text, size/2 + 6, size/2 + 8);
+    // Border
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, 0, canvas.width, canvas.height);
 
-    // Stroke
-    ctx.lineWidth = 18;
-    ctx.strokeStyle = '#000000';
-    ctx.strokeText(text, size/2, size/2);
+    // Text
+    ctx.font = 'bold 80px system-ui, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
 
-    // Fill
+    // Schatten
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillText(text, canvas.width/2 + 2, canvas.height/2 + 2);
+
+    // Weißer Text
     ctx.fillStyle = '#ffffff';
-    ctx.fillText(text, size/2, size/2);
+    ctx.fillText(text, canvas.width/2, canvas.height/2);
 
-    const tex = new THREE.CanvasTexture(cv);
-    tex.anisotropy = 4; tex.needsUpdate = true;
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
     this.texCache.set(text, tex);
     return tex;
   }
